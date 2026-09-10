@@ -1,6 +1,6 @@
-// This is a minimal 16550 UART driver for COM1, this is 
-// mainly going to be used for debugging since its really 
-// simple to setup. Fun fact: i was drunk when i wrote this 
+// This is a minimal 16550 UART driver for COM1, this is mainly going 
+// to be used for debugging since its really simple to setup. 
+// Fun fact: i was drunk when i wrote this 
 //
 // see: https://wiki.osdev.org/Serial_Ports
 
