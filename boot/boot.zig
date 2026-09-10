@@ -1,12 +1,17 @@
 const std = @import("std");
 const limine = @import("limine.zig");
+const serial = @import("serial.zig");
 
 // We need a panic handler otherwise zig won't be happy,
 // std usually formats a message through std.Io.Writer which
-// emits SSE instructions which I haven't enabled. For now
-// we just halt.
+// emits SSE instructions which I haven't enabled. Ours
+// dumps the message to serial, then halts.
 pub const panic = std.debug.FullPanic(struct {
-    fn halt(_: []const u8, _: ?usize) noreturn {
+    fn halt(msg: []const u8, _: ?usize) noreturn {
+        serial.init();
+        serial.write("\n!!! uhhhh engine kaput : ");
+        serial.write(msg);
+        serial.write("\n");
         while (true) asm volatile ("hlt");
     }
 }.halt);
@@ -18,5 +23,7 @@ export var requests_end: limine.RequestsEndMarker linksection(".limine_requests_
 
 // ENTRY(_start)
 export fn _start() callconv(.c) noreturn {
+    serial.init();
+    serial.write("if you see this, it means revel didn't shit the bed");
     while (true) asm volatile ("hlt");
 }

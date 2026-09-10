@@ -41,13 +41,9 @@ iso: kernel limine/limine
 		iso_root -o $(ISO)
 	./limine/limine bios-install $(ISO)
 
-# for now this is just going to be a headless run
-# all I need this for is to check for kernel panics
-# and limine related failures.
+# boot it in a real QEMU window. serial goes back later.
 run: iso
-	$(QEMU) -M q35 -m 256M -cdrom $(ISO) -boot d   \
-	        -display none -serial stdio -no-reboot \
-			-no-shutdown
+	$(QEMU) -M q35 -m 256M -cdrom $(ISO) -boot d -no-reboot -no-shutdown
 
 clean:
 	rm -rf iso_root zig-out .zig-cache $(ISO)
