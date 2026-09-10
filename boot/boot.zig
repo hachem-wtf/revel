@@ -2,6 +2,8 @@ const std = @import("std");
 const limine = @import("limine.zig");
 const serial = @import("serial.zig");
 const framebuffer = @import("framebuffer.zig");
+const gdt = @import("gdt.zig");
+const idt = @import("idt.zig");
 
 // We need a panic handler otherwise zig won't be happy,
 // std usually formats a message through std.Io.Writer which
@@ -26,6 +28,10 @@ export var requests_end: limine.RequestsEndMarker linksection(".limine_requests_
 export fn _start() callconv(.c) noreturn {
     serial.init();
     serial.write("if you see this, it means revel didn't shit the bed\r\n");
+
+    gdt.load();
+    idt.init();
+    serial.write("gdt + idt loaded\r\n");
 
     if (framebuffer.get()) |screen| {
         // XOR texture
