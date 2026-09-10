@@ -32,8 +32,8 @@ fn requestId(a: u64, b: u64) [4]u64 {
     return .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, a, b };
 }
 
-// --- Framebuffer feature: ask Limine for a linear framebuffer ---
-
+// this comes from the limine spec
+// you can see it in the header files
 pub const Framebuffer = extern struct {
     address: [*]u8,
     width: u64,
@@ -50,7 +50,7 @@ pub const Framebuffer = extern struct {
     // 7 bytes of padding land here (extern-struct alignment before edid_size)
     edid_size: u64,
     edid: ?*anyopaque,
-    // response revision 1 and up — unused for now:
+    // response revision 1 and up, unused for now:
     mode_count: u64,
     modes: ?*anyopaque,
 };
