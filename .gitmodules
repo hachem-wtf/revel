@@ -1,0 +1,6 @@
+[submodule "revo"]
+	path = revo
+	url = https://github.com/hachem-wtf/revo.git
+[submodule "limine"]
+	path = limine
+	url = https://github.com/limine-bootloader/limine.git

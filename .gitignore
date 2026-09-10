@@ -1,0 +1,15 @@
+# zig build output
+/zig-out/
+/.zig-cache/
+
+# ISO staging + image
+/iso_root/
+/*.iso
+
+# local boot scratch (screendumps, qemu logs)
+/*.ppm
+/*.png
+/*.log
+
+# clang + sanitization stuff
+/*.dSYM

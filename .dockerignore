@@ -1,0 +1,10 @@
+.git
+revo
+limine
+iso_root
+zig-out
+.zig-cache
+*.iso
+*.ppm
+*.png
+*.log

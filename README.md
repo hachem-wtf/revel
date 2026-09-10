@@ -1,2 +1,6 @@
 # revel
-kernel made in revo
+A Unix-like kernel, written in revo!
+
+## License
+
+MIT, see [LICENSE](LICENSE).
