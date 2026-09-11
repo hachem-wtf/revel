@@ -4,6 +4,8 @@ const serial = @import("serial.zig");
 const framebuffer = @import("framebuffer.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
+const pmm = @import("pmm.zig");
+const heap = @import("heap.zig");
 
 // We need a panic handler otherwise zig won't be happy,
 // std usually formats a message through std.Io.Writer which
@@ -24,6 +26,11 @@ export var base_revision: limine.BaseRevision linksection(".limine_requests") = 
 export var requests_start: limine.RequestsStartMarker linksection(".limine_requests_start") = .{};
 export var requests_end: limine.RequestsEndMarker linksection(".limine_requests_end") = .{};
 
+// the loader fills these before we run so we read them through volatile pointers or
+// the optimizer assumes they're still the null we initialized them to
+export var hhdm_request: limine.HhdmRequest linksection(".limine_requests") = .{};
+export var memmap_request: limine.MemoryMapRequest linksection(".limine_requests") = .{};
+
 // ENTRY(_start)
 export fn _start() callconv(.c) noreturn {
     serial.init();
@@ -31,7 +38,37 @@ export fn _start() callconv(.c) noreturn {
 
     gdt.load();
     idt.init();
+
+    
     serial.write("gdt + idt loaded\r\n");
+
+    // HHDM + memory map -> physical frame allocator -> kernel heap
+    const hhdm_req: *volatile limine.HhdmRequest = &hhdm_request;
+    const memmap_req: *volatile limine.MemoryMapRequest = &memmap_request;
+    const hhdm = hhdm_req.response orelse @panic("limine gave us no HHDM");
+    const memmap = memmap_req.response orelse @panic("limine gave us no memory map");
+
+    pmm.init(hhdm, memmap);
+    pmm.dump(memmap);
+    heap.init();
+
+    // NOTE: this is a sanity check
+    // two allocations should be distinct and non-overlapping,
+    // and a freed frame should come straight back on the next alloc.
+    const a = pmm.alloc().?;
+    const b = pmm.alloc().?;
+    serial.write("pmm test: a=");
+    serial.writeHex(a);
+    serial.write(" b=");
+    serial.writeHex(b);
+    serial.write("\r\n");
+    pmm.free(a);
+    const c = pmm.alloc().?;
+    serial.write("pmm test: freed a, realloc=");
+    serial.writeHex(c);
+    serial.write(if (c == a) " (reused, good)\r\n" else " (mismatch!)\r\n");
+    pmm.free(b);
+    pmm.free(c);
 
     if (framebuffer.get()) |screen| {
         // XOR texture

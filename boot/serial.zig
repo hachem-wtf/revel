@@ -48,3 +48,31 @@ fn putc(c: u8) void {
 pub fn write(s: []const u8) void {
     for (s) |c| putc(c);
 }
+
+// dump a u64 as decimal. handy for "usable: N MiB" type logging.
+pub fn writeDec(value: u64) void {
+    if (value == 0) return putc('0');
+    var buf: [20]u8 = undefined;
+    var i: usize = buf.len;
+    var v = value;
+    while (v > 0) {
+        i -= 1;
+        buf[i] = '0' + @as(u8, @intCast(v % 10));
+        v /= 10;
+    }
+    write(buf[i..]);
+}
+
+// dump a u64 as 0x-prefixed 16-digit hex.
+pub fn writeHex(value: u64) void {
+    const digits = "0123456789abcdef";
+    var buf: [18]u8 = undefined;
+    buf[0] = '0';
+    buf[1] = 'x';
+    var i: usize = 0;
+    while (i < 16) : (i += 1) {
+        const shift: u6 = @intCast((15 - i) * 4);
+        buf[2 + i] = digits[(value >> shift) & 0xF];
+    }
+    write(&buf);
+}

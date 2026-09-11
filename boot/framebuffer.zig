@@ -19,7 +19,7 @@ pub fn get() ?*Framebuffer {
 }
 
 // assumes the usual Limine RGB 32-bpp layout im sure i wont forget about this layout
-// later and i wont fuck me over
+// later and it wont fuck me over
 pub fn putpixel(fb: *Framebuffer, x: usize, y: usize, color: u32) void {
     const pixel: *align(1) u32 = @ptrCast(fb.address + y * fb.pitch + x * 4);
     pixel.* = color;

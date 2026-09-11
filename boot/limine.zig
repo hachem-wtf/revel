@@ -1,6 +1,6 @@
-// Limine scans the loaded image for these magic numbers,
-// BaseRevision is a handshake, essentially we ask limine
-// for rev 3, and if it supports it, limine zeros it out
+// Limine scans the loaded image for these magic numbers, BaseRevision is 
+// a handshake, essentially we ask limine for rev 3, and if it supports it, 
+// limine zeros it out
 pub const BaseRevision = extern struct {
     magic0: u64 = 0xf9562b2d5c95a6c8,
     magic1: u64 = 0x6a7b384944536bdc,
@@ -11,9 +11,8 @@ pub const BaseRevision = extern struct {
     }
 };
 
-// Bracketing markers, they are pretty optional but when
-// we add proper limine requests, having these here comes
-// handy
+// bracketing markers, they are pretty optional but when we add proper 
+// limine requests, having these here comes handy
 pub const RequestsStartMarker = extern struct {
     m0: u64 = 0xf6b8f4b39de7d1ae,
     m1: u64 = 0xfab91a6940fcb9cf,
@@ -26,8 +25,8 @@ pub const RequestsEndMarker = extern struct {
     m1: u64 = 0x9572709f31764c62,
 };
 
-// Every request id starts with this common magic, then two request-specific
-// words. Limine scans .limine_requests for these and fills in `response`.
+// every request id starts with this common magic, then two request specific
+// words, bootloader scans .limine_requests for these and fills in `response`
 fn requestId(a: u64, b: u64) [4]u64 {
     return .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, a, b };
 }
@@ -65,4 +64,54 @@ pub const FramebufferRequest = extern struct {
     id: [4]u64 = requestId(0x9d5827dcd881dd75, 0xa3148604f6fab11b),
     revision: u64 = 0,
     response: ?*FramebufferResponse = null,
+};
+
+// HHDM = higher-half direct map, limine linearly maps ALL of physical memory
+// starting at `offset`, so any physical address p is reachable at p + offset
+// This is how we touch physical frames without setting up our own page tables
+// and this is how my hypothetical future girlfriend should touch my pointer
+pub const HhdmResponse = extern struct {
+    revision: u64,
+    offset: u64,
+};
+
+pub const HhdmRequest = extern struct {
+    id: [4]u64 = requestId(0x48dcf1cb8ad2b852, 0x63984e959a98244b),
+    revision: u64 = 0,
+    response: ?*HhdmResponse = null,
+};
+
+// what each region of physical memory is
+// only `usable` (0) is ours to hand out freely
+// the rest belongs to firmware and other stingy shits
+pub const MemoryType = enum(u64) {
+    usable = 0,
+    reserved = 1,
+    acpi_reclaimable = 2,
+    acpi_nvs = 3,
+    bad = 4,
+    bootloader_reclaimable = 5,
+    kernel_and_modules = 6,
+    framebuffer = 7,
+    _,
+};
+
+pub const MemoryMapEntry = extern struct {
+    base: u64,
+    length: u64,
+    type: MemoryType,
+};
+
+// NOTE: `entries` is an array of POINTERS to entries, not the entries inline
+// NOTE: i will forget this
+pub const MemoryMapResponse = extern struct {
+    revision: u64,
+    entry_count: u64,
+    entries: ?[*]*MemoryMapEntry,
+};
+
+pub const MemoryMapRequest = extern struct {
+    id: [4]u64 = requestId(0x67cf3d9d378a806f, 0xe304acdfc50c3c62),
+    revision: u64 = 0,
+    response: ?*MemoryMapResponse = null,
 };
