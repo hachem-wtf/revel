@@ -6,6 +6,7 @@ const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const heap = @import("heap.zig");
+const keyboard = @import("keyboard.zig");
 const bridge = @import("bridge");
 
 // We need a panic handler otherwise zig won't be happy,
@@ -52,8 +53,8 @@ export fn _start() callconv(.c) noreturn {
 
     gdt.load();
     idt.init();
-
-    
+    // NOTE: CPU interrupts stay off until the event loop's sti
+    //       which is after the VM has run that\
     serial.write("gdt + idt loaded\r\n");
 
     // HHDM + memory map -> physical frame allocator -> kernel heap
@@ -84,23 +85,29 @@ export fn _start() callconv(.c) noreturn {
     pmm.free(b);
     pmm.free(c);
 
-    // hand the kernel heap to revo and we're gucci
-    bridge.run(heap.allocator(), serial.write);
+    // hand the kernel heap + raw framebuffer to revo and bring up the VM
+    const fb: ?bridge.Fb = if (framebuffer.get()) |s| .{
+        .ptr = s.address,
+        .width = s.width,
+        .height = s.height,
+        .pitch = s.pitch,
+    } else null;
+    bridge.boot(heap.allocator(), serial.write, fb);
 
-    if (framebuffer.get()) |screen| {
-        // XOR texture
-        var y: usize = 0;
-        while (y < screen.height) : (y += 1) {
-            var x: usize = 0;
-            while (x < screen.width) : (x += 1) {
-                const v: u32 = @intCast((x ^ y) & 0xFF);
-                framebuffer.putpixel(screen, x, y, (v << 16) | (v << 8) | v);
-            }
+    // - sleep until an interrupt
+    // - drain the keyboard
+    // - repeat.
+    //
+    // the cli/pop/sti-hlt bullshit closes the lost-wakeup race (a key
+    // arriving between "queue empty" and hlt would otherwise sit until
+    // the next keypress)
+    while (true) {
+        asm volatile ("cli");
+        if (keyboard.pop()) |sc| {
+            asm volatile ("sti");
+            bridge.onKey(sc);
+        } else {
+            asm volatile ("sti; hlt");
         }
-        serial.write("drew to the framebuffer\r\n");
-    } else {
-        serial.write("limine was a piece of shit.\r\n");
     }
-
-    while (true) asm volatile ("hlt");
 }

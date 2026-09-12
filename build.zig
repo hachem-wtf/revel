@@ -6,10 +6,10 @@ pub fn build(b: *std.Build) void {
     // f128/SSE ops, which i don't provide.
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "optimize mode") orelse .ReleaseSafe;
 
-    // The kernel must NOT touch SSE/MMX/AVX until it has 
-    // enabled them itself, so I strip those features and 
-    // let the compiler use a soft-float ABI. 
-    // `code_model = .kernel` keeps relocations valid for 
+    // The kernel must NOT touch SSE/MMX/AVX until it has
+    // enabled them itself, so I strip those features and
+    // let the compiler use a soft-float ABI
+    // `code_model = .kernel` keeps relocations valid for
     // the higher-half load address in boot/linker.ld.
     //
     // In other words. Going raw baby
@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) void {
     var visited: std.AutoHashMap(*std.Build.Module, void) = .init(b.allocator);
     defer visited.deinit();
     kernelize(revo_mod, &visited);
-    
+
     // the thin guns
     const bridge_mod = b.createModule(.{
         .root_source_file = b.path("bridge/bridge.zig"),
@@ -63,6 +63,9 @@ pub fn build(b: *std.Build) void {
         .link_libc = false,
     });
     bridge_mod.addImport("revo", revo_mod);
+    // the OS source lives in kernel/*.rv; @embedFile("kernel_main") in the bridge
+    // pulls it in at build time (an anonymous import lets it cross the module dir)
+    bridge_mod.addAnonymousImport("kernel_main", .{ .root_source_file = b.path("kernel/main.rv") });
 
     kernel.root_module.addImport("bridge", bridge_mod);
 

@@ -1,6 +1,6 @@
-// This is a minimal 16550 UART driver for COM1, this is mainly going 
-// to be used for debugging since its really simple to setup. 
-// Fun fact: i was drunk when i wrote this 
+// this is a minimal 16550 UART driver for COM1, this is mainly going
+// to be used for debugging since its really simple to setup.
+// Fun fact: i was drunk when i wrote this
 //
 // see: https://wiki.osdev.org/Serial_Ports
 
@@ -38,15 +38,23 @@ pub fn init() void {
     outb(COM1 + 4, 0x0B); // RTS/DSR set
 }
 
-// COM1+5 (bit 5) = transmit holding register and 
+// COM1+5 (bit 5) = transmit holding register and
 //                  spin until it's clear to send
 fn putc(c: u8) void {
     while (inb(COM1 + 5) & 0x20 == 0) {}
     outb(COM1, c);
 }
 
+// a raw serial console needs \r\n, but revo (and most sane code) emits bare \n.
+// inject the \r ourselves, skipping it when the \n already has one so existing
+// "\r\n" strings don't turn into "\r\r\n".
 pub fn write(s: []const u8) void {
-    for (s) |c| putc(c);
+    var prev: u8 = 0;
+    for (s) |c| {
+        if (c == '\n' and prev != '\r') putc('\r');
+        putc(c);
+        prev = c;
+    }
 }
 
 // dump a u64 as decimal. handy for "usable: N MiB" type logging.

@@ -6,6 +6,8 @@
 
 const gdt = @import("gdt.zig");
 const serial = @import("serial.zig");
+const pic = @import("pic.zig");
+const keyboard = @import("keyboard.zig");
 
 // 64bit interrupt gate
 const Gate = packed struct {
@@ -26,7 +28,7 @@ const Idtr = packed struct {
 var idt = [_]Gate{@bitCast(@as(u128, 0))} ** 256;
 var idtr: Idtr = undefined;
 
-// what the common stub leaves on the stack, low address -> high. 
+// what the common stub leaves on the stack, low address -> high.
 // `mov rdi, rsp` hands the handler a pointer to this
 const Frame = extern struct {
     r15: u64,
@@ -55,17 +57,17 @@ const Frame = extern struct {
 };
 
 const names = [_][]const u8{
-    "divide by zero",          "debug",
-    "non-maskable interrupt",  "breakpoint",
-    "overflow",                "bound range exceeded",
-    "invalid opcode",          "device not available",
-    "double fault",            "coprocessor segment overrun",
-    "invalid TSS",             "segment not present",
-    "stack-segment fault",     "general protection fault",
-    "page fault",              "reserved",
-    "x87 floating-point",      "alignment check",
-    "machine check",           "SIMD floating-point",
-    "virtualization",          "control protection",
+    "divide by zero",         "debug",
+    "non-maskable interrupt", "breakpoint",
+    "overflow",               "bound range exceeded",
+    "invalid opcode",         "device not available",
+    "double fault",           "coprocessor segment overrun",
+    "invalid TSS",            "segment not present",
+    "stack-segment fault",    "general protection fault",
+    "page fault",             "reserved",
+    "x87 floating-point",     "alignment check",
+    "machine check",          "SIMD floating-point",
+    "virtualization",         "control protection",
 };
 
 fn name(vector: u64) []const u8 {
@@ -134,21 +136,93 @@ fn writeHex(value: u64) void {
 export fn exceptionHandler(frame: *Frame) callconv(.c) noreturn {
     serial.write("\r\n!!! CPU DID AN OOPSIE: ");
     serial.write(name(frame.vector));
-    serial.write("\r\n  vector="); writeHex(frame.vector);
-    serial.write(" err="); writeHex(frame.error_code);
-    serial.write("\r\n  rip="); writeHex(frame.rip);
-    serial.write(" cs="); writeHex(frame.cs);
-    serial.write("\r\n  rflags="); writeHex(frame.rflags);
-    serial.write(" rsp="); writeHex(frame.rsp);
+    serial.write("\r\n  vector=");
+    writeHex(frame.vector);
+    serial.write(" err=");
+    writeHex(frame.error_code);
+    serial.write("\r\n  rip=");
+    writeHex(frame.rip);
+    serial.write(" cs=");
+    writeHex(frame.cs);
+    serial.write("\r\n  rflags=");
+    writeHex(frame.rflags);
+    serial.write(" rsp=");
+    writeHex(frame.rsp);
     // page faults stash the offending address in CR2
     if (frame.vector == 14) {
         const cr2 = asm volatile ("mov %%cr2, %[out]"
             : [out] "=r" (-> u64),
         );
-        serial.write("\r\n  cr2="); writeHex(cr2);
+        serial.write("\r\n  cr2=");
+        writeHex(cr2);
     }
     serial.write("\r\n");
     while (true) asm volatile ("hlt");
+}
+
+// hardware IRQ.
+// unlike exceptions these must return so we acknowledge the PIC and iretq
+// back to whatever we interrupted. the stub mirrors the exception one (dummy
+// error code + vector for a uniform Frame) but jumps to the returning path.
+fn irqStub(comptime vector: u8) fn () callconv(.naked) void {
+    return struct {
+        fn entry() callconv(.naked) void {
+            asm volatile ("pushq $0"); // dummy error code, keeps Frame uniform
+            asm volatile ("pushq %[v]\n jmp irqCommon"
+                :
+                : [v] "i" (@as(u32, vector)),
+            );
+        }
+    }.entry;
+}
+
+// same register save as isrCommon, but afterwards we restore everything, drop
+// the pushed vector + error code, and iretq instead of halting.
+export fn irqCommon() callconv(.naked) void {
+    asm volatile (
+        \\ push %rax
+        \\ push %rbx
+        \\ push %rcx
+        \\ push %rdx
+        \\ push %rsi
+        \\ push %rdi
+        \\ push %rbp
+        \\ push %r8
+        \\ push %r9
+        \\ push %r10
+        \\ push %r11
+        \\ push %r12
+        \\ push %r13
+        \\ push %r14
+        \\ push %r15
+        \\ mov %rsp, %rdi
+        \\ call irqDispatch
+        \\ pop %r15
+        \\ pop %r14
+        \\ pop %r13
+        \\ pop %r12
+        \\ pop %r11
+        \\ pop %r10
+        \\ pop %r9
+        \\ pop %r8
+        \\ pop %rbp
+        \\ pop %rdi
+        \\ pop %rsi
+        \\ pop %rdx
+        \\ pop %rcx
+        \\ pop %rbx
+        \\ pop %rax
+        \\ add $16, %rsp
+        \\ iretq
+    );
+}
+
+export fn irqDispatch(frame: *Frame) callconv(.c) void {
+    switch (frame.vector) {
+        pic.MASTER_OFFSET + 1 => keyboard.onIrq(), // IRQ1: keyboard
+        else => {},
+    }
+    pic.eoi(@intCast(frame.vector - pic.MASTER_OFFSET));
 }
 
 fn setGate(vector: u8, handler: u64) void {
@@ -166,6 +240,9 @@ fn setGate(vector: u8, handler: u64) void {
 // fill the exception vectors and load the IDT
 pub fn init() void {
     inline for (0..32) |v| setGate(v, @intFromPtr(&stub(v)));
+    // IRQ1 (keyboard) -> vector 0x21
+    // the PIC is remapped separately in boot.
+    setGate(pic.MASTER_OFFSET + 1, @intFromPtr(&irqStub(pic.MASTER_OFFSET + 1)));
     idtr = .{ .limit = @sizeOf(@TypeOf(idt)) - 1, .base = @intFromPtr(&idt) };
     asm volatile ("lidt (%[idtr])"
         :

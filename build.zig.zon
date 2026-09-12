@@ -11,5 +11,6 @@
         "build.zig.zon",
         "boot",
         "bridge",
+        "kernel",
     },
 }
