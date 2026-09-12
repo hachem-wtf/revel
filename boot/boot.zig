@@ -6,6 +6,7 @@ const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const heap = @import("heap.zig");
+const vmm = @import("vmm.zig");
 const keyboard = @import("keyboard.zig");
 const bridge = @import("bridge");
 
@@ -84,6 +85,39 @@ export fn _start() callconv(.c) noreturn {
     serial.write(if (c == a) " (reused, good)\r\n" else " (mismatch!)\r\n");
     pmm.free(b);
     pmm.free(c);
+
+    // this is just a VMM smoke test
+    // we map a fresh frame at an unused higher half address in the
+    // active address space, write a pattern, read it back through the mapping
+    {
+        const pml4 = vmm.activePml4();
+        const frame = pmm.alloc().?;
+        const test_virt: u64 = 0xffff_c000_0000_0000;
+        _ = vmm.map(pml4, test_virt, frame, vmm.WRITE);
+        const cell: *volatile u64 = @ptrFromInt(test_virt);
+        cell.* = 0xDEADBEEFCAFEBABE;
+        serial.write("vmm test: map+rw ");
+        serial.write(if (cell.* == 0xDEADBEEFCAFEBABE) "OK" else "FAIL");
+        serial.write(", translate ");
+        const back = vmm.translate(pml4, test_virt) orelse 0;
+        serial.write(if (back == frame) "OK\r\n" else "FAIL\r\n");
+
+        // create a separate address space, switch into it (the scary part -- a
+        // bad CR3 triple-faults), map a lower-half user page, read/write it,
+        // then switch back. if the kernel keeps running, address spaces work.
+        const as = vmm.createAddressSpace().?;
+        const user_frame = pmm.alloc().?;
+        const user_virt: u64 = 0x0000_0000_4000_0000; // 1 GiB, lower half (user)
+        _ = vmm.map(as, user_virt, user_frame, vmm.WRITE | vmm.USER);
+        vmm.loadPml4(as);
+        serial.write("vmm test: switched CR3 OK\r\n"); // reached => kernel still mapped
+        const ucell: *volatile u64 = @ptrFromInt(user_virt);
+        ucell.* = 0x1234_5678_9ABC_DEF0;
+        serial.write("vmm test: user page rw ");
+        serial.write(if (ucell.* == 0x123456789ABCDEF0) "OK\r\n" else "FAIL\r\n");
+        vmm.loadPml4(pml4); // back to the original address space
+        serial.write("vmm test: switched back OK\r\n");
+    }
 
     // hand the kernel heap + raw framebuffer to revo and bring up the VM
     const fb: ?bridge.Fb = if (framebuffer.get()) |s| .{
