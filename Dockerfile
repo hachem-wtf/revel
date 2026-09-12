@@ -1,7 +1,7 @@
-# This is so that if something breaks, lung doesn't tell at me
+# This is so that if something breaks, lung doesn't yell at me
 #
-#   docker build -t revel .
-#   docker run --rm -v "$PWD":/revel revel make run
+# docker build -t revel .
+# docker run --rm -v "$PWD":/revel revel make run
 FROM debian:bookworm-slim
 
 ARG ZIG_VERSION=0.16.0
