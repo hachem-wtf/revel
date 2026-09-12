@@ -26,11 +26,13 @@ pub fn build(b: *std.Build) void {
     query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx2));
     query.cpu_features_add.addFeature(@intFromEnum(Feature.soft_float));
 
+    const target = b.resolveTargetQuery(query);
+
     const kernel = b.addExecutable(.{
         .name = "revel",
         .root_module = b.createModule(.{
             .root_source_file = b.path("boot/boot.zig"),
-            .target = b.resolveTargetQuery(query),
+            .target = target,
             .optimize = optimize,
             .code_model = .kernel,
             .red_zone = false,
@@ -42,5 +44,40 @@ pub fn build(b: *std.Build) void {
     kernel.pie = false;
     kernel.setLinkerScript(b.path("boot/linker.ld"));
 
+    // the big guns
+    const revo_dep = b.dependency("revo", .{ .target = target, .optimize = optimize });
+    const revo_mod = revo_dep.module("revo");
+
+    var visited: std.AutoHashMap(*std.Build.Module, void) = .init(b.allocator);
+    defer visited.deinit();
+    kernelize(revo_mod, &visited);
+    
+    // the thin guns
+    const bridge_mod = b.createModule(.{
+        .root_source_file = b.path("bridge/bridge.zig"),
+        .target = target,
+        .optimize = optimize,
+        .code_model = .kernel,
+        .red_zone = false,
+        .single_threaded = true,
+        .link_libc = false,
+    });
+    bridge_mod.addImport("revo", revo_mod);
+
+    kernel.root_module.addImport("bridge", bridge_mod);
+
     b.installArtifact(kernel);
+}
+
+// force a module and everything it imports to the kernel's codegen settings
+fn kernelize(mod: *std.Build.Module, visited: *std.AutoHashMap(*std.Build.Module, void)) void {
+    if (visited.contains(mod)) return;
+    visited.put(mod, {}) catch @panic("OOM building module graph");
+
+    mod.code_model = .kernel;
+    mod.red_zone = false;
+    mod.single_threaded = true;
+
+    var it = mod.import_table.iterator();
+    while (it.next()) |entry| kernelize(entry.value_ptr.*, visited);
 }

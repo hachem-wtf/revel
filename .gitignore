@@ -1,6 +1,8 @@
 # zig build output
 /zig-out/
 /.zig-cache/
+# fetched package cache
+/zig-pkg/
 
 # ISO staging + image
 /iso_root/

@@ -10,9 +10,9 @@ const std = @import("std");
 const pmm = @import("pmm.zig");
 const serial = @import("serial.zig");
 
-// 4 MiB. 
+// 32 MiB.
 // NOTE: bump if the VM needs more
-const HEAP_PAGES: usize = 1024;
+const HEAP_PAGES: usize = 8192;
 
 var fba: std.heap.FixedBufferAllocator = undefined;
 

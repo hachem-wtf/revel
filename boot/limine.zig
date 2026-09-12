@@ -66,6 +66,20 @@ pub const FramebufferRequest = extern struct {
     response: ?*FramebufferResponse = null,
 };
 
+// ask limine for a bigger bootstrap stack than its ~64 KiB default cause
+// revo's VM init builds a large struct on the stack and runs a fat recursive
+// descent parser to register its stdlib, which page faults the machine
+pub const StackSizeResponse = extern struct {
+    revision: u64,
+};
+
+pub const StackSizeRequest = extern struct {
+    id: [4]u64 = requestId(0x224ef0460a8e8926, 0xe1cb0fc25f46ea3d),
+    revision: u64 = 0,
+    response: ?*StackSizeResponse = null,
+    stack_size: u64,
+};
+
 // HHDM = higher-half direct map, limine linearly maps ALL of physical memory
 // starting at `offset`, so any physical address p is reachable at p + offset
 // This is how we touch physical frames without setting up our own page tables

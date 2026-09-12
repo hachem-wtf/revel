@@ -6,20 +6,31 @@ const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const heap = @import("heap.zig");
+const bridge = @import("bridge");
 
 // We need a panic handler otherwise zig won't be happy,
 // std usually formats a message through std.Io.Writer which
 // emits SSE instructions which I haven't enabled. Ours
 // dumps the message to serial, then halts.
 pub const panic = std.debug.FullPanic(struct {
-    fn halt(msg: []const u8, _: ?usize) noreturn {
+    fn halt(msg: []const u8, ret_addr: ?usize) noreturn {
         serial.init();
         serial.write("\r\n!!! uhhhh engine kaput : ");
         serial.write(msg);
+        if (ret_addr) |ra| {
+            serial.write("\r\n  at ");
+            serial.writeHex(ra);
+        }
         serial.write("\r\n");
         while (true) asm volatile ("hlt");
     }
 }.halt);
+
+// std.debug.print (revo hits it on a few error paths) defaults to a threaded
+// stderr IO that doesn't exist on freestanding and won't even compile. This
+// just points it to the custom one we wrote in bridge tthat uses the serial
+// console and shit
+pub const std_options_debug_io: std.Io = bridge.debug_io;
 
 // Check `linker.ld`
 export var base_revision: limine.BaseRevision linksection(".limine_requests") = limine.BaseRevision.init(3);
@@ -30,6 +41,9 @@ export var requests_end: limine.RequestsEndMarker linksection(".limine_requests_
 // the optimizer assumes they're still the null we initialized them to
 export var hhdm_request: limine.HhdmRequest linksection(".limine_requests") = .{};
 export var memmap_request: limine.MemoryMapRequest linksection(".limine_requests") = .{};
+
+// 4 MiB stack
+export var stack_size_request: limine.StackSizeRequest linksection(".limine_requests") = .{ .stack_size = 4 * 1024 * 1024 };
 
 // ENTRY(_start)
 export fn _start() callconv(.c) noreturn {
@@ -69,6 +83,9 @@ export fn _start() callconv(.c) noreturn {
     serial.write(if (c == a) " (reused, good)\r\n" else " (mismatch!)\r\n");
     pmm.free(b);
     pmm.free(c);
+
+    // hand the kernel heap to revo and we're gucci
+    bridge.run(heap.allocator(), serial.write);
 
     if (framebuffer.get()) |screen| {
         // XOR texture

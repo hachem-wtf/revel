@@ -140,6 +140,13 @@ export fn exceptionHandler(frame: *Frame) callconv(.c) noreturn {
     serial.write(" cs="); writeHex(frame.cs);
     serial.write("\r\n  rflags="); writeHex(frame.rflags);
     serial.write(" rsp="); writeHex(frame.rsp);
+    // page faults stash the offending address in CR2
+    if (frame.vector == 14) {
+        const cr2 = asm volatile ("mov %%cr2, %[out]"
+            : [out] "=r" (-> u64),
+        );
+        serial.write("\r\n  cr2="); writeHex(cr2);
+    }
     serial.write("\r\n");
     while (true) asm volatile ("hlt");
 }
