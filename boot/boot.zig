@@ -7,6 +7,7 @@ const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const heap = @import("heap.zig");
 const vmm = @import("vmm.zig");
+const user = @import("user.zig");
 const keyboard = @import("keyboard.zig");
 const bridge = @import("bridge");
 
@@ -54,6 +55,7 @@ export fn _start() callconv(.c) noreturn {
 
     gdt.load();
     idt.init();
+    user.installSyscall(); // int 0x80 gate at DPL 3
     // NOTE: CPU interrupts stay off until the event loop's sti
     //       which is after the VM has run that\
     serial.write("gdt + idt loaded\r\n");
@@ -118,6 +120,8 @@ export fn _start() callconv(.c) noreturn {
         vmm.loadPml4(pml4); // back to the original address space
         serial.write("vmm test: switched back OK\r\n");
     }
+
+    user.runTestProgram();
 
     // hand the kernel heap + raw framebuffer to revo and bring up the VM
     const fb: ?bridge.Fb = if (framebuffer.get()) |s| .{

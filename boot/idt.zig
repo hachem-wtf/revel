@@ -160,7 +160,7 @@ export fn exceptionHandler(frame: *Frame) callconv(.c) noreturn {
     while (true) asm volatile ("hlt");
 }
 
-// hardware IRQ.
+// hardware IRQ
 // unlike exceptions these must return so we acknowledge the PIC and iretq
 // back to whatever we interrupted. the stub mirrors the exception one (dummy
 // error code + vector for a uniform Frame) but jumps to the returning path.
@@ -225,12 +225,14 @@ export fn irqDispatch(frame: *Frame) callconv(.c) void {
     pic.eoi(@intCast(frame.vector - pic.MASTER_OFFSET));
 }
 
-fn setGate(vector: u8, handler: u64) void {
+// dpl 0 = only ring 0 can invoke via `int`
+// dpl 3 = ring 3 may (for syscalls)
+pub fn setGate(vector: u8, handler: u64, dpl: u2) void {
     idt[vector] = .{
         .offset_low = @truncate(handler),
         .selector = gdt.KERNEL_CODE,
         .ist = 0,
-        .type_attr = 0x8E,
+        .type_attr = 0x8E | (@as(u8, dpl) << 5),
         .offset_mid = @truncate(handler >> 16),
         .offset_high = @truncate(handler >> 32),
         .reserved = 0,
@@ -239,10 +241,10 @@ fn setGate(vector: u8, handler: u64) void {
 
 // fill the exception vectors and load the IDT
 pub fn init() void {
-    inline for (0..32) |v| setGate(v, @intFromPtr(&stub(v)));
+    inline for (0..32) |v| setGate(v, @intFromPtr(&stub(v)), 0);
     // IRQ1 (keyboard) -> vector 0x21
     // the PIC is remapped separately in boot.
-    setGate(pic.MASTER_OFFSET + 1, @intFromPtr(&irqStub(pic.MASTER_OFFSET + 1)));
+    setGate(pic.MASTER_OFFSET + 1, @intFromPtr(&irqStub(pic.MASTER_OFFSET + 1)), 0);
     idtr = .{ .limit = @sizeOf(@TypeOf(idt)) - 1, .base = @intFromPtr(&idt) };
     asm volatile ("lidt (%[idtr])"
         :
