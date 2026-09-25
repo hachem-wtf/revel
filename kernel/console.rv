@@ -30,7 +30,7 @@ end
 
 fn con_newline() do
   con.col = 0
-  con.row = con.row + 1
+  con.row += 1
   if con.row >= con_rows() do
     fb_scroll(cell_h(), CON_BG)
     con.row = con_rows() - 1
@@ -44,21 +44,26 @@ fn con_putc(ch) do
   if code == 10 do con_newline() return :nil end # \n
   if code == 13 do con.col = 0 return :nil end   # \r
   if code == 8 do                                # backspace: move left
-    if con.col > 0 con.col = con.col - 1
+    if con.col > 0 con.col -= 1
     return :nil
   end
   if code < 32 return :nil
   draw_glyph(con.col, con.row, ch)
-  con.col = con.col + 1
+  con.col += 1
   if con.col >= con_cols() con_newline()
 end
 
 fn puts(s) serial_puts(s)
 
+const CUR = 0x50fa7b
+fn cursor_paint(color) fill_rect(con.col * cell_w(), con.row * cell_h(), cell_w(), cell_h(), color)
+
 global flush_console = fn() do
+  cursor_paint(CON_BG)
   let c = serial_next()
   while c >= 0 do
     con_putc(string.of_ascii(c))
     c = serial_next()
   end
+  cursor_paint(CUR)
 end

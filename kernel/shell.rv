@@ -38,18 +38,17 @@ end
 fn cmd_time() puts("utc " ~ bcd(rtc(4)) ~ ":" ~ bcd(rtc(2)) ~ ":" ~ bcd(rtc(0)) ~ "\n")
 
 fn run(line) do
+  if line:trim():len() == 0 do puts("> ") return :nil end
   const words = line:split(" ")
   const cmd = words[0]
-  if cmd == "help" do cmd_help() end
-  else if cmd == "clear" do cmd_clear() end
-  else if cmd == "bars" do cmd_bars() end
-  else if cmd == "time" do cmd_time() end
-  else if cmd == "run" do cmd_run() end
-  else if cmd == "zoom" do cmd_zoom(words) end
-  else if cmd == "echo" do
-    if line:len() > 5 puts(line:sub(5, line:len() - 5) ~ "\n") else puts("\n")
-  end
-  else if line:len() == 0 do :nil end
-  else do puts("unknown command: " ~ cmd ~ "\n") end
+  match cmd
+    | "help" => cmd_help()
+    | "clear" => cmd_clear()
+    | "bars" => cmd_bars()
+    | "time" => cmd_time()
+    | "run" => cmd_run()
+    | "zoom" => cmd_zoom(words)
+    | "echo" => if line:len() > 5 puts(line:sub(5, line:len() - 5) ~ "\n") else puts("\n")
+    | _ => puts("unknown command: " ~ cmd ~ "\n")
   puts("> ")
 end

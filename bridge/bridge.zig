@@ -402,12 +402,7 @@ fn registerPrimitives(vm: *revo.VM) !void {
 // the VM outlives boot() now, so we juts make this hoe static
 var g_vm: ?*revo.VM = null;
 
-// revo freestanding bug (fork @ fd0ff06): the module's very first top-level
-// statement must not be a table literal, or module eval throws "want table, got
-// atom" while building it. a leading no-op statement sidesteps it. remove once
-// revo fixes the freestanding codegen upstream.
-const init_program = "const _revel_boot = 0\n" ++
-    @embedFile("k_font") ++ "\n" ++
+const init_program = @embedFile("k_font") ++ "\n" ++
     @embedFile("k_console") ++ "\n" ++
     @embedFile("k_vmm") ++ "\n" ++
     @embedFile("k_proc") ++ "\n" ++

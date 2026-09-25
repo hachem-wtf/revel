@@ -42,6 +42,7 @@ global on_key = fn(code) do
   if code < 2 return :nil
   if code >= KBD:len() return :nil
   const ch = if sh.shift KBD_SHIFT[code] else KBD[code]
-  sh.line = sh.line ~ ch
+  if ch == " " and code != 0x39 return :nil
+  sh.line ~= ch
   puts(ch)
 end
