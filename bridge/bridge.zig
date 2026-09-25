@@ -157,8 +157,8 @@ const SinkWriter = struct {
     fn flush(_: *std.Io.Writer) std.Io.Writer.Error!void {}
 };
 
-const HostResult = revo.std_lib.HostResult;
-const Data = revo.Data;
+const HostResult = revo.baselib.host.HostResult;
+const Data = revo.Value;
 
 // revo's only number type is f64 which is really fucking annoying
 fn f64ToInt(comptime T: type, n: f64) ?T {
@@ -173,9 +173,9 @@ fn f64ToInt(comptime T: type, n: f64) ?T {
 }
 
 // pass shit to revo
-fn hostOutb(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
-    const port = f64ToInt(u16, args[0].asNum().?) orelse return HostResult.other("outb: port out of range");
-    const val = f64ToInt(u8, args[1].asNum().?) orelse return HostResult.other("outb: value out of range");
+fn hostOutb(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const port = f64ToInt(u16, args[0].asNumOpt().?) orelse return HostResult.other("outb: port out of range");
+    const val = f64ToInt(u8, args[1].asNumOpt().?) orelse return HostResult.other("outb: value out of range");
     asm volatile ("outb %[v], %[p]"
         :
         : [v] "{al}" (val),
@@ -185,8 +185,8 @@ fn hostOutb(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
 }
 
 // pass shit to revo
-fn hostInb(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
-    const port = f64ToInt(u16, args[0].asNum().?) orelse return HostResult.other("inb: port out of range");
+fn hostInb(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const port = f64ToInt(u16, args[0].asNumOpt().?) orelse return HostResult.other("inb: port out of range");
     const val = asm volatile ("inb %[p], %[r]"
         : [r] "={al}" (-> u8),
         : [p] "N{dx}" (port),
@@ -195,7 +195,7 @@ fn hostInb(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
 }
 
 // pass shit to revo
-fn hostPuts(args: []const revo.Data, vm: *revo.VM) anyerror!HostResult {
+fn hostPuts(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
     const s = args[0].asString() orelse return HostResult.other("puts: not a string");
     emit(vm.stringValue(s));
     return HostResult.data(Data.new.nil());
@@ -210,22 +210,22 @@ pub const Fb = struct {
 };
 var g_fb: ?Fb = null;
 
-fn hostFbWidth(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostFbWidth(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(if (g_fb) |fb| fb.width else 0));
 }
 
-fn hostFbHeight(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostFbHeight(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(if (g_fb) |fb| fb.height else 0));
 }
 
 // color is 0xRRGGBB in the usual Limine 32-bpp layout
-fn hostFillRect(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostFillRect(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const fb = g_fb orelse return HostResult.data(Data.new.nil()); // no screen, no-op
-    const x = f64ToInt(usize, args[0].asNum().?) orelse return HostResult.other("fill_rect: bad x");
-    const y = f64ToInt(usize, args[1].asNum().?) orelse return HostResult.other("fill_rect: bad y");
-    const w = f64ToInt(usize, args[2].asNum().?) orelse return HostResult.other("fill_rect: bad w");
-    const h = f64ToInt(usize, args[3].asNum().?) orelse return HostResult.other("fill_rect: bad h");
-    const color = f64ToInt(u32, args[4].asNum().?) orelse return HostResult.other("fill_rect: bad color");
+    const x = f64ToInt(usize, args[0].asNumOpt().?) orelse return HostResult.other("fill_rect: bad x");
+    const y = f64ToInt(usize, args[1].asNumOpt().?) orelse return HostResult.other("fill_rect: bad y");
+    const w = f64ToInt(usize, args[2].asNumOpt().?) orelse return HostResult.other("fill_rect: bad w");
+    const h = f64ToInt(usize, args[3].asNumOpt().?) orelse return HostResult.other("fill_rect: bad h");
+    const color = f64ToInt(u32, args[4].asNumOpt().?) orelse return HostResult.other("fill_rect: bad color");
 
     var yy = y;
     const y_end = @min(y + h, fb.height);
@@ -247,10 +247,10 @@ fn emit(bytes: []const u8) void {
 }
 
 // shift the whole framebuffer up dy pixels and clear the freed rows
-fn hostFbScroll(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostFbScroll(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const fb = g_fb orelse return HostResult.data(Data.new.nil());
-    const dy = f64ToInt(usize, args[0].asNum().?) orelse return HostResult.other("fb_scroll: bad dy");
-    const color = f64ToInt(u32, args[1].asNum().?) orelse return HostResult.other("fb_scroll: bad color");
+    const dy = f64ToInt(usize, args[0].asNumOpt().?) orelse return HostResult.other("fb_scroll: bad dy");
+    const color = f64ToInt(u32, args[1].asNumOpt().?) orelse return HostResult.other("fb_scroll: bad color");
     if (dy == 0 or dy >= fb.height) return HostResult.data(Data.new.nil());
     const move_bytes = dy * fb.pitch;
     const total = fb.height * fb.pitch;
@@ -279,10 +279,10 @@ pub const KernelOps = struct {
 var g_kops: ?KernelOps = null;
 
 // mem_read(phys, size) -> value: read 1/2/4/8 bytes of physical memory
-fn hostMemRead(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostMemRead(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
-    const phys = f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("mem_read: bad addr");
-    const size = f64ToInt(u64, args[1].asNum().?) orelse return HostResult.other("mem_read: bad size");
+    const phys = f64ToInt(u64, args[0].asNumOpt().?) orelse return HostResult.other("mem_read: bad addr");
+    const size = f64ToInt(u64, args[1].asNumOpt().?) orelse return HostResult.other("mem_read: bad size");
     const v = ops.phys_to_virt(phys);
     const val: u64 = switch (size) {
         1 => @as(*const u8, @ptrFromInt(v)).*,
@@ -295,30 +295,30 @@ fn hostMemRead(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
 }
 
 // mem_copy(dst_phys, src_phys, len): raw copy between physical regions
-fn hostMemCopy(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostMemCopy(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
-    const dst = ops.phys_to_virt(f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("mem_copy: bad dst"));
-    const src = ops.phys_to_virt(f64ToInt(u64, args[1].asNum().?) orelse return HostResult.other("mem_copy: bad src"));
-    const len = f64ToInt(usize, args[2].asNum().?) orelse return HostResult.other("mem_copy: bad len");
+    const dst = ops.phys_to_virt(f64ToInt(u64, args[0].asNumOpt().?) orelse return HostResult.other("mem_copy: bad dst"));
+    const src = ops.phys_to_virt(f64ToInt(u64, args[1].asNumOpt().?) orelse return HostResult.other("mem_copy: bad src"));
+    const len = f64ToInt(usize, args[2].asNumOpt().?) orelse return HostResult.other("mem_copy: bad len");
     @memcpy(@as([*]u8, @ptrFromInt(dst))[0..len], @as([*]const u8, @ptrFromInt(src))[0..len]);
     return HostResult.data(Data.new.nil());
 }
 
 // mem_zero(phys, len)
-fn hostMemZero(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostMemZero(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
-    const dst = ops.phys_to_virt(f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("mem_zero: bad addr"));
-    const len = f64ToInt(usize, args[1].asNum().?) orelse return HostResult.other("mem_zero: bad len");
+    const dst = ops.phys_to_virt(f64ToInt(u64, args[0].asNumOpt().?) orelse return HostResult.other("mem_zero: bad addr"));
+    const len = f64ToInt(usize, args[1].asNumOpt().?) orelse return HostResult.other("mem_zero: bad len");
     @memset(@as([*]u8, @ptrFromInt(dst))[0..len], 0);
     return HostResult.data(Data.new.nil());
 }
 
 // mem_write(phys, val, size): write 1/2/4/8 bytes of physical memory
-fn hostMemWrite(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostMemWrite(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
-    const phys = f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("mem_write: bad addr");
-    const val = f64ToInt(u64, args[1].asNum().?) orelse return HostResult.other("mem_write: bad val");
-    const size = f64ToInt(u64, args[2].asNum().?) orelse return HostResult.other("mem_write: bad size");
+    const phys = f64ToInt(u64, args[0].asNumOpt().?) orelse return HostResult.other("mem_write: bad addr");
+    const val = f64ToInt(u64, args[1].asNumOpt().?) orelse return HostResult.other("mem_write: bad val");
+    const size = f64ToInt(u64, args[2].asNumOpt().?) orelse return HostResult.other("mem_write: bad size");
     const v = ops.phys_to_virt(phys);
     switch (size) {
         1 => @as(*u8, @ptrFromInt(v)).* = @truncate(val),
@@ -331,8 +331,8 @@ fn hostMemWrite(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
 }
 
 // invlpg(virt): flush one page from the TLB after remapping it
-fn hostInvlpg(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
-    const virt = f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("invlpg: bad addr");
+fn hostInvlpg(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const virt = f64ToInt(u64, args[0].asNumOpt().?) orelse return HostResult.other("invlpg: bad addr");
     asm volatile ("invlpg (%[v])"
         :
         : [v] "r" (virt),
@@ -340,44 +340,44 @@ fn hostInvlpg(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.nil());
 }
 
-fn hostFrameAlloc(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostFrameAlloc(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
     return HostResult.data(Data.new.num(ops.alloc_frame()));
 }
 
-fn hostAsCreate(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostAsCreate(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
     return HostResult.data(Data.new.num(ops.create_addrspace()));
 }
 
-fn hostProcRun(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostProcRun(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
-    const as = f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("proc_run: bad as");
-    const entry = f64ToInt(u64, args[1].asNum().?) orelse return HostResult.other("proc_run: bad entry");
-    const ustack = f64ToInt(u64, args[2].asNum().?) orelse return HostResult.other("proc_run: bad ustack");
+    const as = f64ToInt(u64, args[0].asNumOpt().?) orelse return HostResult.other("proc_run: bad as");
+    const entry = f64ToInt(u64, args[1].asNumOpt().?) orelse return HostResult.other("proc_run: bad entry");
+    const ustack = f64ToInt(u64, args[2].asNumOpt().?) orelse return HostResult.other("proc_run: bad ustack");
     ops.run_process(as, entry, ustack);
     return HostResult.data(Data.new.nil());
 }
 
 // serial_next() -> byte or -1
-fn hostSerialNext(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostSerialNext(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
     return HostResult.data(Data.new.num(ops.serial_next()));
 }
 
-fn hostElfPhys(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostElfPhys(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
     return HostResult.data(Data.new.num(ops.elf_phys));
 }
 
-fn hostElfSize(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+fn hostElfSize(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const ops = g_kops orelse return HostResult.other("no kernel ops");
     return HostResult.data(Data.new.num(ops.elf_size));
 }
 
 fn registerPrimitives(vm: *revo.VM) !void {
-    const define = revo.std_lib.define;
-    const T = revo.std_lib.TypeSpec;
+    const define = revo.baselib.host.define;
+    const T = revo.baselib.host.ParamType;
     try vm.registerGlobal("outb", try vm.installHost("outb", define(&[_]T{ .number, .number }, hostOutb)));
     try vm.registerGlobal("inb", try vm.installHost("inb", define(&[_]T{.number}, hostInb)));
     try vm.registerGlobal("serial_puts", try vm.installHost("serial_puts", define(&[_]T{.string}, hostPuts)));
@@ -402,7 +402,12 @@ fn registerPrimitives(vm: *revo.VM) !void {
 // the VM outlives boot() now, so we juts make this hoe static
 var g_vm: ?*revo.VM = null;
 
-const init_program = @embedFile("k_font") ++ "\n" ++
+// revo freestanding bug (fork @ fd0ff06): the module's very first top-level
+// statement must not be a table literal, or module eval throws "want table, got
+// atom" while building it. a leading no-op statement sidesteps it. remove once
+// revo fixes the freestanding codegen upstream.
+const init_program = "const _revel_boot = 0\n" ++
+    @embedFile("k_font") ++ "\n" ++
     @embedFile("k_console") ++ "\n" ++
     @embedFile("k_vmm") ++ "\n" ++
     @embedFile("k_proc") ++ "\n" ++
@@ -461,7 +466,7 @@ pub fn boot(alloc: std.mem.Allocator, out: Sink, fb: ?Fb, ops: ?KernelOps) void 
         return;
     };
 
-    const eval_result = revo.module.runCompiledModuleReport(vm, "kernel", artifact.instructions) catch {
+    const eval_result = revo.run.runBytecodeReport(vm, "kernel", artifact.instructions) catch {
         out("bridge: eval threw\r\n");
         return;
     };
@@ -484,7 +489,7 @@ pub fn onKey(scancode: u8) void {
     const vm = g_vm orelse return;
     const cb = vm.getGlobal("on_key") orelse return;
     if (cb.asFunction() == null) return;
-    _ = vm.callFunctionParts(cb, null, &[_]revo.Data{revo.Data.new.num(scancode)}, null) catch {
+    _ = vm.callFunctionParts(cb, null, &[_]revo.Value{revo.Value.new.num(scancode)}, null) catch {
         sink("bridge: on_key threw\r\n");
     };
     flushConsole(vm);
