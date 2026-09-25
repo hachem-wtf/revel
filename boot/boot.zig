@@ -8,6 +8,7 @@ const pmm = @import("pmm.zig");
 const heap = @import("heap.zig");
 const vmm = @import("vmm.zig");
 const user = @import("user.zig");
+const elf = @import("elf.zig");
 const keyboard = @import("keyboard.zig");
 const bridge = @import("bridge");
 
@@ -47,6 +48,21 @@ export var memmap_request: limine.MemoryMapRequest linksection(".limine_requests
 
 // 4 MiB stack
 export var stack_size_request: limine.StackSizeRequest linksection(".limine_requests") = .{ .stack_size = 4 * 1024 * 1024 };
+
+// wrappers matching bridge.KernelOps (pmm/vmm return optionals; the revo-facing
+// primitives use 0 as the failure sentinel).
+fn kPhysToVirt(p: u64) u64 {
+    return pmm.physToVirt(p);
+}
+fn kAllocFrame() u64 {
+    return pmm.alloc() orelse 0;
+}
+fn kCreateAddrspace() u64 {
+    return vmm.createAddressSpace() orelse 0;
+}
+fn kSerialNext() i64 {
+    return if (serial.mirrorNext()) |c| @intCast(c) else -1;
+}
 
 // ENTRY(_start)
 export fn _start() callconv(.c) noreturn {
@@ -121,16 +137,27 @@ export fn _start() callconv(.c) noreturn {
         serial.write("vmm test: switched back OK\r\n");
     }
 
-    user.runTestProgram();
+    const elf_pages = (elf.hello_elf.len + 4095) / 4096;
+    const elf_phys = pmm.allocContig(elf_pages) orelse @panic("no room for the embedded ELF");
+    @memcpy(@as([*]u8, @ptrFromInt(pmm.physToVirt(elf_phys)))[0..elf.hello_elf.len], elf.hello_elf);
+    const kops: bridge.KernelOps = .{
+        .phys_to_virt = &kPhysToVirt,
+        .alloc_frame = &kAllocFrame,
+        .create_addrspace = &kCreateAddrspace,
+        .run_process = &user.runProcess,
+        .serial_next = &kSerialNext,
+        .elf_phys = elf_phys,
+        .elf_size = elf.hello_elf.len,
+    };
 
-    // hand the kernel heap + raw framebuffer to revo and bring up the VM
+    // hand the kernel heap + framebuffer + low-level ops to revo and bring up the VM
     const fb: ?bridge.Fb = if (framebuffer.get()) |s| .{
         .ptr = s.address,
         .width = s.width,
         .height = s.height,
         .pitch = s.pitch,
     } else null;
-    bridge.boot(heap.allocator(), serial.write, fb);
+    bridge.boot(heap.allocator(), serial.write, fb, kops);
 
     // - sleep until an interrupt
     // - drain the keyboard

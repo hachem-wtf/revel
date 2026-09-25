@@ -1,0 +1,40 @@
+# parse the embedded ELF (physical address from elf_phys()) and run it in ring 3
+
+const PT_LOAD = 1
+const PAGE_FLAGS = 6      # WRITE | USER
+
+fn cmd_run() do
+  const base = elf_phys()
+  if mem_read(base, 4) != 0x464c457f do
+    puts("run: not an ELF\n")
+    return :nil
+  end
+  const entry = mem_read(base + 24, 8)
+  const phoff = mem_read(base + 32, 8)
+  const phnum = mem_read(base + 56, 2)
+  const phentsize = mem_read(base + 54, 2)
+  const as = as_create()
+  for i in 0..phnum do
+    const ph = base + phoff + i * phentsize
+    if mem_read(ph, 4) == PT_LOAD do
+      const offset = mem_read(ph + 8, 8)
+      const vaddr = mem_read(ph + 16, 8)
+      const filesz = mem_read(ph + 32, 8)
+      const memsz = mem_read(ph + 40, 8)
+      let off = 0
+      while off < memsz do
+        const frame = frame_alloc()
+        mem_zero(frame, 4096)
+        if off < filesz do
+          const left = filesz - off
+          mem_copy(frame, base + offset + off, if left > 4096 4096 else left)
+        end
+        as_map(as, vaddr + off, frame, PAGE_FLAGS)
+        off = off + 4096
+      end
+    end
+  end
+  const stack_top = 0x7fff0000
+  as_map(as, stack_top - 4096, frame_alloc(), PAGE_FLAGS)
+  proc_run(as, entry, stack_top)
+end

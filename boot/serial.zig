@@ -38,11 +38,29 @@ pub fn init() void {
     outb(COM1 + 4, 0x0B); // RTS/DSR set
 }
 
+// every byte we send to the port is also captured here so the revo
+// console can render the same stream
+var mirror: [1 << 15]u8 = undefined; // 32 KiB, power of two
+var m_head: usize = 0; // next byte the console will render
+var m_tail: usize = 0; // next slot putc will write
+
 // COM1+5 (bit 5) = transmit holding register and
 //                  spin until it's clear to send
 fn putc(c: u8) void {
     while (inb(COM1 + 5) & 0x20 == 0) {}
     outb(COM1, c);
+    mirror[m_tail & (mirror.len - 1)] = c;
+    m_tail +%= 1;
+}
+
+// next un-rendered byte, or null if caught up. if the console fell far enough
+// behind to lap the ring, drop the oldest bytes.
+pub fn mirrorNext() ?u8 {
+    if (m_head == m_tail) return null;
+    if (m_tail -% m_head > mirror.len) m_head = m_tail -% mirror.len;
+    const c = mirror[m_head & (mirror.len - 1)];
+    m_head +%= 1;
+    return c;
 }
 
 // a raw serial console needs \r\n, but revo (and most sane code) emits bare \n.

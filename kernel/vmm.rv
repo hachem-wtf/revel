@@ -1,0 +1,24 @@
+# build the 4-level page tables for one user page
+# everything here only writes small entries we construct, so it's f64-safe
+const PTE_ADDR = 0x000FFFFFFFFFF000
+
+fn pte_idx(virt, level) (virt shr (12 + 9 * level)) band 0x1ff
+
+# next-level table phys under entry `i` of table `tbl`, creating it if absent
+fn next_table(tbl, i) do
+  const slot = tbl + i * 8
+  const entry = mem_read(slot, 8)
+  if (entry band 1) != 0 return entry band PTE_ADDR
+  const frame = frame_alloc()
+  mem_zero(frame, 4096)
+  mem_write(slot, frame bor 7, 8) # present | write | user
+  frame
+end
+
+fn as_map(pml4, virt, phys, flags) do
+  const pdpt = next_table(pml4, pte_idx(virt, 3))
+  const pd = next_table(pdpt, pte_idx(virt, 2))
+  const pt = next_table(pd, pte_idx(virt, 1))
+  mem_write(pt + pte_idx(virt, 0) * 8, (phys band PTE_ADDR) bor flags bor 1, 8)
+  invlpg(virt)
+end

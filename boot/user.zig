@@ -1,7 +1,7 @@
 // ring3 entry + the syscall boundary
 // drop user mode with iretq, and come back to the kernel
 //
-// see: - https://wiki.osdev.org/System_Calls 
+// see: - https://wiki.osdev.org/System_Calls
 //      - https://wiki.osdev.org/Getting_to_Ring_3
 
 const serial = @import("serial.zig");
@@ -52,17 +52,7 @@ pub fn enterUser(entry: u64, ustack: u64) void {
     g_user_stack = ustack;
     // this is the truest most correct statement ever
     // get this man a true
-    asm volatile ("call enterUserAsm" ::: .{ 
-        .memory = true, 
-        .rax = true, 
-        .rcx = true, 
-        .rdx = true, 
-        .rsi = true, 
-        .rdi = true, 
-        .r8 = true, 
-        .r9 = true, 
-        .r10 = true, 
-        .r11 = true });
+    asm volatile ("call enterUserAsm" ::: .{ .memory = true, .rax = true, .rcx = true, .rdx = true, .rsi = true, .rdi = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true });
 }
 
 export fn enterUserAsm() callconv(.naked) void {
@@ -134,15 +124,28 @@ export fn syscallStub() callconv(.naked) void {
     );
 }
 
-// returns 0 to resume the program, 1 to return to the kernel (exit).
+pub fn runProcess(pml4: u64, entry: u64, ustack: u64) void {
+    const prev = vmm.activePml4();
+    vmm.loadPml4(pml4);
+    enterUser(entry, ustack);
+    vmm.loadPml4(prev);
+}
+
 export fn syscallHandler(frame: *SyscallFrame) callconv(.c) u64 {
     switch (frame.rax) {
-        0 => { // exit
-            serial.write("[syscall] exit -> back to kernel\r\n");
-            return 1;
+        0 => { // exit(code): code in rdi
+            return 1; // tell the stub to unwind back into the kernel
         },
-        1 => { // "hello" -- a fixed message, no user pointer to validate yet
-            serial.write("[syscall] hello from ring 3!\r\n");
+        1 => { // write(ptr, len): rdi = user pointer, rsi = length
+            const len = frame.rsi;
+            // the process's address space is active during the syscall, so the
+            // kernel can read the user pointer directly. cap the length so a
+            // bogus arg can't run us off into unmapped memory.
+            if (len > 0 and len <= 4096) {
+                const bytes: [*]const u8 = @ptrFromInt(frame.rdi);
+                serial.write(bytes[0..len]); // mirrored -> the revo console renders it
+            }
+            frame.rax = len; // syscall return value
             return 0;
         },
         else => {

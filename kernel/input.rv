@@ -1,0 +1,47 @@
+# keyboard scancode table
+# ts is NOT a good way to write a driver LMAO
+const KBD       = "  1234567890-=  qwertyuiop[]  asdfghjkl;'` \\zxcvbnm,./    "
+# same layout, shifted. index 42 (left shift) / 54 (right shift) stay blank.
+const KBD_SHIFT = "  !@#$%^&*()_+  QWERTYUIOP{}  ASDFGHJKL:\"~ |ZXCVBNM<>?    "
+
+# 8259 PIC
+fn pic_remap() do
+  outb(0x20, 0x11)  outb(0xa0, 0x11)
+  outb(0x21, 0x20)  outb(0xa1, 0x28)
+  outb(0x21, 0x04)  outb(0xa1, 0x02)
+  outb(0x21, 0x01)  outb(0xa1, 0x01)
+  outb(0x21, 0xff)  outb(0xa1, 0xff)
+end
+fn pic_unmask(line) outb(0x21, inb(0x21) band (255 bxor (1 shl line)))
+
+# she stroke my keys till i handle
+# no fr this is just a key stroke handler
+global sh = { line = "", shift = :false }
+global on_key = fn(code) do
+  # shift: 0x2a/0x36 press,
+  #        0xaa/0xb6 release
+  # index a blank cell and type a stray space.
+  if code == 0x2a do sh.shift = :true  return :nil end
+  if code == 0x36 do sh.shift = :true  return :nil end
+  if code == 0xaa do sh.shift = :false return :nil end
+  if code == 0xb6 do sh.shift = :false return :nil end
+  if code >= 128 return :nil # other key releases
+  if code == 28 do           # Enter
+    puts("\n")
+    run(sh.line)
+    sh.line = ""
+    return :nil
+  end
+  if code == 14 do           # Backspace
+    if sh.line:len() > 0 do
+      sh.line = sh.line:sub(0, sh.line:len() - 1)
+      puts("\x08 \x08")
+    end
+    return :nil
+  end
+  if code < 2 return :nil
+  if code >= KBD:len() return :nil
+  const ch = if sh.shift KBD_SHIFT[code] else KBD[code]
+  sh.line = sh.line ~ ch
+  puts(ch)
+end

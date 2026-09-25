@@ -63,11 +63,32 @@ pub fn build(b: *std.Build) void {
         .link_libc = false,
     });
     bridge_mod.addImport("revo", revo_mod);
-    // the OS source lives in kernel/*.rv; @embedFile("kernel_main") in the bridge
-    // pulls it in at build time (an anonymous import lets it cross the module dir)
-    bridge_mod.addAnonymousImport("kernel_main", .{ .root_source_file = b.path("kernel/main.rv") });
+    inline for (.{
+        .{ "k_font", "kernel/font.rv" },
+        .{ "k_console", "kernel/console.rv" },
+        .{ "k_vmm", "kernel/vmm.rv" },
+        .{ "k_proc", "kernel/proc.rv" },
+        .{ "k_shell", "kernel/shell.rv" },
+        .{ "k_input", "kernel/input.rv" },
+        .{ "k_main", "kernel/main.rv" },
+    }) |e| {
+        bridge_mod.addAnonymousImport(e[0], .{ .root_source_file = b.path(e[1]) });
+    }
 
     kernel.root_module.addImport("bridge", bridge_mod);
+
+    const cc = b.addSystemCommand(&.{
+        "zig",                  "cc",
+        "-target",              "x86_64-freestanding",
+        "-ffreestanding",       "-nostdlib",
+        "-static",              "-no-pie",
+        "-fno-stack-protector", "-fno-sanitize=all",
+        "-Wl,-T,user/link.ld",  "-Wl,--build-id=none",
+        "-o",
+    });
+    const program_elf = cc.addOutputFileArg("user_program.elf");
+    cc.addFileArg(b.path("user/program.c"));
+    kernel.root_module.addAnonymousImport("user_program", .{ .root_source_file = program_elf });
 
     b.installArtifact(kernel);
 }

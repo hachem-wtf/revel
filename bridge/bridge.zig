@@ -267,8 +267,114 @@ fn hostFbScroll(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.nil());
 }
 
-// install the primitives as globals the revo program can call by name
-// idk how else we should be doing this, lung said he'll do stdlib stuff
+pub const KernelOps = struct {
+    phys_to_virt: *const fn (u64) u64,
+    alloc_frame: *const fn () u64, // 0 on failure
+    create_addrspace: *const fn () u64, // pml4 phys, 0 on failure (raw 64-bit entry copy incl. possible NX bit -> not f64-representable)
+    run_process: *const fn (u64, u64, u64) void, // pml4, entry, ustack
+    serial_next: *const fn () i64, // next mirrored serial byte, or -1 if empty
+    elf_phys: u64,
+    elf_size: u64,
+};
+var g_kops: ?KernelOps = null;
+
+// mem_read(phys, size) -> value: read 1/2/4/8 bytes of physical memory
+fn hostMemRead(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    const phys = f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("mem_read: bad addr");
+    const size = f64ToInt(u64, args[1].asNum().?) orelse return HostResult.other("mem_read: bad size");
+    const v = ops.phys_to_virt(phys);
+    const val: u64 = switch (size) {
+        1 => @as(*const u8, @ptrFromInt(v)).*,
+        2 => @as(*align(1) const u16, @ptrFromInt(v)).*,
+        4 => @as(*align(1) const u32, @ptrFromInt(v)).*,
+        8 => @as(*align(1) const u64, @ptrFromInt(v)).*,
+        else => return HostResult.other("mem_read: size must be 1/2/4/8"),
+    };
+    return HostResult.data(Data.new.num(val));
+}
+
+// mem_copy(dst_phys, src_phys, len): raw copy between physical regions
+fn hostMemCopy(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    const dst = ops.phys_to_virt(f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("mem_copy: bad dst"));
+    const src = ops.phys_to_virt(f64ToInt(u64, args[1].asNum().?) orelse return HostResult.other("mem_copy: bad src"));
+    const len = f64ToInt(usize, args[2].asNum().?) orelse return HostResult.other("mem_copy: bad len");
+    @memcpy(@as([*]u8, @ptrFromInt(dst))[0..len], @as([*]const u8, @ptrFromInt(src))[0..len]);
+    return HostResult.data(Data.new.nil());
+}
+
+// mem_zero(phys, len)
+fn hostMemZero(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    const dst = ops.phys_to_virt(f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("mem_zero: bad addr"));
+    const len = f64ToInt(usize, args[1].asNum().?) orelse return HostResult.other("mem_zero: bad len");
+    @memset(@as([*]u8, @ptrFromInt(dst))[0..len], 0);
+    return HostResult.data(Data.new.nil());
+}
+
+// mem_write(phys, val, size): write 1/2/4/8 bytes of physical memory
+fn hostMemWrite(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    const phys = f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("mem_write: bad addr");
+    const val = f64ToInt(u64, args[1].asNum().?) orelse return HostResult.other("mem_write: bad val");
+    const size = f64ToInt(u64, args[2].asNum().?) orelse return HostResult.other("mem_write: bad size");
+    const v = ops.phys_to_virt(phys);
+    switch (size) {
+        1 => @as(*u8, @ptrFromInt(v)).* = @truncate(val),
+        2 => @as(*align(1) u16, @ptrFromInt(v)).* = @truncate(val),
+        4 => @as(*align(1) u32, @ptrFromInt(v)).* = @truncate(val),
+        8 => @as(*align(1) u64, @ptrFromInt(v)).* = val,
+        else => return HostResult.other("mem_write: size must be 1/2/4/8"),
+    }
+    return HostResult.data(Data.new.nil());
+}
+
+// invlpg(virt): flush one page from the TLB after remapping it
+fn hostInvlpg(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const virt = f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("invlpg: bad addr");
+    asm volatile ("invlpg (%[v])"
+        :
+        : [v] "r" (virt),
+        : .{ .memory = true });
+    return HostResult.data(Data.new.nil());
+}
+
+fn hostFrameAlloc(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    return HostResult.data(Data.new.num(ops.alloc_frame()));
+}
+
+fn hostAsCreate(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    return HostResult.data(Data.new.num(ops.create_addrspace()));
+}
+
+fn hostProcRun(args: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    const as = f64ToInt(u64, args[0].asNum().?) orelse return HostResult.other("proc_run: bad as");
+    const entry = f64ToInt(u64, args[1].asNum().?) orelse return HostResult.other("proc_run: bad entry");
+    const ustack = f64ToInt(u64, args[2].asNum().?) orelse return HostResult.other("proc_run: bad ustack");
+    ops.run_process(as, entry, ustack);
+    return HostResult.data(Data.new.nil());
+}
+
+// serial_next() -> byte or -1
+fn hostSerialNext(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    return HostResult.data(Data.new.num(ops.serial_next()));
+}
+
+fn hostElfPhys(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    return HostResult.data(Data.new.num(ops.elf_phys));
+}
+
+fn hostElfSize(_: []const revo.Data, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    return HostResult.data(Data.new.num(ops.elf_size));
+}
+
 fn registerPrimitives(vm: *revo.VM) !void {
     const define = revo.std_lib.define;
     const T = revo.std_lib.TypeSpec;
@@ -279,16 +385,35 @@ fn registerPrimitives(vm: *revo.VM) !void {
     try vm.registerGlobal("fb_height", try vm.installHost("fb_height", define(&[_]T{}, hostFbHeight)));
     try vm.registerGlobal("fill_rect", try vm.installHost("fill_rect", define(&[_]T{ .number, .number, .number, .number, .number }, hostFillRect)));
     try vm.registerGlobal("fb_scroll", try vm.installHost("fb_scroll", define(&[_]T{ .number, .number }, hostFbScroll)));
+    // low-level: memory + address spaces + process launch (revo's ELF loader)
+    try vm.registerGlobal("mem_read", try vm.installHost("mem_read", define(&[_]T{ .number, .number }, hostMemRead)));
+    try vm.registerGlobal("mem_copy", try vm.installHost("mem_copy", define(&[_]T{ .number, .number, .number }, hostMemCopy)));
+    try vm.registerGlobal("mem_zero", try vm.installHost("mem_zero", define(&[_]T{ .number, .number }, hostMemZero)));
+    try vm.registerGlobal("mem_write", try vm.installHost("mem_write", define(&[_]T{ .number, .number, .number }, hostMemWrite)));
+    try vm.registerGlobal("invlpg", try vm.installHost("invlpg", define(&[_]T{.number}, hostInvlpg)));
+    try vm.registerGlobal("frame_alloc", try vm.installHost("frame_alloc", define(&[_]T{}, hostFrameAlloc)));
+    try vm.registerGlobal("as_create", try vm.installHost("as_create", define(&[_]T{}, hostAsCreate)));
+    try vm.registerGlobal("proc_run", try vm.installHost("proc_run", define(&[_]T{ .number, .number, .number }, hostProcRun)));
+    try vm.registerGlobal("serial_next", try vm.installHost("serial_next", define(&[_]T{}, hostSerialNext)));
+    try vm.registerGlobal("elf_phys", try vm.installHost("elf_phys", define(&[_]T{}, hostElfPhys)));
+    try vm.registerGlobal("elf_size", try vm.installHost("elf_size", define(&[_]T{}, hostElfSize)));
 }
 
 // the VM outlives boot() now, so we juts make this hoe static
 var g_vm: ?*revo.VM = null;
 
-const init_program = @embedFile("kernel_main");
+const init_program = @embedFile("k_font") ++ "\n" ++
+    @embedFile("k_console") ++ "\n" ++
+    @embedFile("k_vmm") ++ "\n" ++
+    @embedFile("k_proc") ++ "\n" ++
+    @embedFile("k_shell") ++ "\n" ++
+    @embedFile("k_input") ++ "\n" ++
+    @embedFile("k_main");
 
-pub fn boot(alloc: std.mem.Allocator, out: Sink, fb: ?Fb) void {
+pub fn boot(alloc: std.mem.Allocator, out: Sink, fb: ?Fb, ops: ?KernelOps) void {
     sink = out;
     g_fb = fb;
+    g_kops = ops;
 
     // NOTE: we drive the VM directly (compile -> run) instead of the high-level
     // Runtime.eval wrapper, which has a latent type error in revo that only
@@ -328,9 +453,9 @@ pub fn boot(alloc: std.mem.Allocator, out: Sink, fb: ?Fb) void {
             return;
         },
     };
+
     // NOTE: on purpose we don't free artifact.instructions/spans cause on_key's
     //       bytecode lives in there and we call it for the life of the kernel
-
     vm.setProgramDebugInfo(artifact.spans, "", "kernel") catch {
         out("bridge: setProgramDebugInfo failed\r\n");
         return;
@@ -362,4 +487,12 @@ pub fn onKey(scancode: u8) void {
     _ = vm.callFunctionParts(cb, null, &[_]revo.Data{revo.Data.new.num(scancode)}, null) catch {
         sink("bridge: on_key threw\r\n");
     };
+    flushConsole(vm);
+}
+
+// render any serial output produced while handling the key
+fn flushConsole(vm: *revo.VM) void {
+    const f = vm.getGlobal("flush_console") orelse return;
+    if (f.asFunction() == null) return;
+    _ = vm.callFunctionParts(f, null, &.{}, null) catch {};
 }

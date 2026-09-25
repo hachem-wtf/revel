@@ -1,0 +1,64 @@
+const FW = 8            # glyph width in pixels
+const FH = 16           # glyph height in pixels (8x16 VGA bitmap font)
+const FG = 0xd0d0d0
+const CON_BG = 0x101018
+
+global con = { col = 0, row = 0, scale = 1 }
+
+# cell size in pixels at the current zoom. named cell_* (not cw/ch) so they don't
+# collide with draw_glyph's `ch` character parameter.
+fn cell_w() FW * con.scale
+fn cell_h() FH * con.scale
+fn con_cols() fb_width() / cell_w()
+fn con_rows() fb_height() / cell_h()
+
+fn draw_glyph(col, row, ch) do
+  const x0 = col * cell_w()
+  const y0 = row * cell_h()
+  fill_rect(x0, y0, cell_w(), cell_h(), CON_BG) # clear the cell
+  const code = ch:ascii()
+  if code < 32 return :nil
+  if code > 127 return :nil
+  const g = FONT[code - 32]
+  for fy in 0..FH do
+    const bits = g[fy]
+    for fx in 0..FW do
+      if (bits shr fx) band 1 == 1 fill_rect(x0 + fx * con.scale, y0 + fy * con.scale, con.scale, con.scale, FG)
+    end
+  end
+end
+
+fn con_newline() do
+  con.col = 0
+  con.row = con.row + 1
+  if con.row >= con_rows() do
+    fb_scroll(cell_h(), CON_BG)
+    con.row = con_rows() - 1
+  end
+end
+
+# we dont do Shift/Cntrl
+# thats a job for future me lmao
+fn con_putc(ch) do
+  const code = ch:ascii()
+  if code == 10 do con_newline() return :nil end # \n
+  if code == 13 do con.col = 0 return :nil end   # \r
+  if code == 8 do                                # backspace: move left
+    if con.col > 0 con.col = con.col - 1
+    return :nil
+  end
+  if code < 32 return :nil
+  draw_glyph(con.col, con.row, ch)
+  con.col = con.col + 1
+  if con.col >= con_cols() con_newline()
+end
+
+fn puts(s) serial_puts(s)
+
+global flush_console = fn() do
+  let c = serial_next()
+  while c >= 0 do
+    con_putc(string.of_ascii(c))
+    c = serial_next()
+  end
+end
