@@ -1,24 +1,24 @@
-// our own 4-level (x86_64) page tables, so we can build
-// per-process address spaces and mark pages user-accessible
+// our own 4 level (x86_64) page tables, so we can build
+// per process address spaces and mark pages user accessible
 //
-// physical frames come from the PMM, so we reach any frame through the HHDM
-// (pmm.physToVirt) to read/write table entries. the privileged bits (reading
-// CR3, invlpg) are the only asm here
+// physical frames come from the pmm, so we reach any frame through the hhdm
+// (pmm.phystovirt) to read/write table entries. the privileged bits (reading
+// cr3, invlpg) are the only asm here
 //
 // see: https://wiki.osdev.org/Paging
 
 const pmm = @import("pmm.zig");
 
-// page-table entry flag bits
+// page table entry flag bits
 pub const PRESENT: u64 = 1 << 0;
 pub const WRITE: u64 = 1 << 1;
-pub const USER: u64 = 1 << 2; // 1 = ring-3 accessible
-pub const NX: u64 = 1 << 63; // WARNING: needs EFER.NXE, don't set unless enabled
+pub const USER: u64 = 1 << 2; // 1 = ring 3 accessible
+pub const NX: u64 = 1 << 63; // warning: needs efer.nxe, dont set unless enabled
 
 // bits 12..51 of an entry hold the physical frame address
 const ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
 
-// physical base of the currently active PML4 (top of CR3)
+// physical base of the currently active pml4 (top of cr3)
 pub fn activePml4() u64 {
     const cr3 = asm volatile ("mov %%cr3, %[out]"
         : [out] "=r" (-> u64),
@@ -50,12 +50,12 @@ fn zeroFrame(phys: u64) void {
     @memset(p[0..pmm.PAGE_SIZE], 0);
 }
 
-// which 9 bit slice of the virtual address indexes level (3=PML4 .. 0=PT)
+// which 9 bit slice of the virtual address indexes level (3=pml4 .. 0=pt)
 fn index(virt: u64, level: u6) usize {
     return @intCast((virt >> (12 + 9 * level)) & 0x1FF);
 }
 
-// return the physical base of the next-level table under entry i
+// return the physical base of the next level table under entry i
 // if missing, create one
 fn nextTable(parent_phys: u64, i: usize, create: bool) ?u64 {
     const t = table(parent_phys);
@@ -68,7 +68,7 @@ fn nextTable(parent_phys: u64, i: usize, create: bool) ?u64 {
     return frame;
 }
 
-// map one 4 KiB page: virt -> phys with the given leaf flags (PRESENT is added
+// map one 4 kib page: virt -> phys with the given leaf flags (present is added
 // returns false only if we ran out of frames for intermediate tables
 pub fn map(pml4_phys: u64, virt: u64, phys: u64, flags: u64) bool {
     const pdpt = nextTable(pml4_phys, index(virt, 3), true) orelse return false;
@@ -80,13 +80,13 @@ pub fn map(pml4_phys: u64, virt: u64, phys: u64, flags: u64) bool {
 }
 
 // create a fresh address space
-// a new PML4 that shares the kernel's higher half, so indices 256..511
-// (kernel image, HHDM, stack, VM heap) but has an empty lower half for a
-// process's own user memory. returns the new PML4 phys
+// a new pml4 that shares the kernels higher half, so indices 256..511
+// (kernel image, hhdm, stack, vm heap) but has an empty lower half for a
+// processs own user memory. returns the new pml4 phys
 //
-// sharing is by copying the top-level entries, so every address space points at
-// the SAME kernel page tables, the kernel stays mapped no matter which process
-// is active, which is what lets us keep running after a CR3 switch
+// sharing is by copying the top level entries, so every address space points at
+// the same kernel page tables, the kernel stays mapped no matter which process
+// is active, which is what lets us keep running after a cr3 switch
 pub fn createAddressSpace() ?u64 {
     const pml4 = pmm.alloc() orelse return null;
     zeroFrame(pml4);
@@ -99,7 +99,7 @@ pub fn createAddressSpace() ?u64 {
 
 // walk the tables and return the physical address a virtual address maps to
 // (page base | offset), or null if unmapped
-// NOTE: mostly for debugging
+// note: mostly for debugging
 pub fn translate(pml4_phys: u64, virt: u64) ?u64 {
     const pdpt = nextTable(pml4_phys, index(virt, 3), false) orelse return null;
     const pd = nextTable(pdpt, index(virt, 2), false) orelse return null;

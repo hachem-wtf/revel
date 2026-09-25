@@ -1,10 +1,10 @@
-// Physical memory manager: a bitmap of 4 KiB frames over Limine's memory map.
-// this manages a bitmap of 4 KiB frames over limine's memory map.
-// one bit per frame, 1 = used, 0 = free.
+// physical memory manager: a bitmap of 4 kib frames over limines memory map
+// this manages a bitmap of 4 kib frames over limines memory map
+// one bit per frame, 1 = used, 0 = free
 // this is just barely good enough to bootstrap a real heap later
-// TODO: make this better lmao
+// todo: make this better lmao
 //
-// we never touch physical memory directly, everything goes through the HHDM
+// we never touch physical memory directly, everything goes through the hhdm
 // offset (phys + offset = a virtual address limine already mapped for us)
 //
 // see: https://wiki.osdev.org/Physical_Memory_Allocation
@@ -17,7 +17,7 @@ pub const PAGE_SIZE: usize = 4096;
 var hhdm_offset: u64 = 0;
 
 // the bitmap itself lives inside a usable region (found at init time) and is
-// reached through the HHDM, so it's just a normal slice we write through.
+// reached through the hhdm, so its just a normal slice we write through
 var bitmap: []u8 = &[_]u8{};
 
 var total_frames: usize = 0; // frames the bitmap can index (up to highest usable end)
@@ -41,8 +41,8 @@ fn markFree(i: usize) void {
     bitmap[i >> 3] &= ~(@as(u8, 1) << @intCast(i & 7));
 }
 
-// walk a region's frames and apply f to each index. base is rounded up and
-// end rounded down so we only ever touch whole frames fully inside the region.
+// walk a regions frames and apply f to each index. base is rounded up and
+// end rounded down so we only ever touch whole frames fully inside the region
 fn forEachFrame(base: u64, length: u64, comptime f: fn (usize) void) void {
     const start = (base + PAGE_SIZE - 1) / PAGE_SIZE;
     const end = (base + length) / PAGE_SIZE;
@@ -57,7 +57,7 @@ pub fn init(hhdm: *const limine.HhdmResponse, memmap: *const limine.MemoryMapRes
     const entries = memmap.entries.?[0..memmap.entry_count];
 
     // highest end of any usable region bounds the bitmap. we only ever
-    //  alloc/free usable frames, so there's no point indexing past that
+    //  alloc/free usable frames, so theres no point indexing past that
     var highest: u64 = 0;
     for (entries) |e| {
         if (e.type == .usable) {
@@ -90,12 +90,12 @@ pub fn init(hhdm: *const limine.HhdmResponse, memmap: *const limine.MemoryMapRes
     }
     free_frames = usable_frames;
 
-    // reclaim nothing that we're actually using, so the bitmap's own frames,
-    // and frame 0.
+    // reclaim nothing that were actually using, so the bitmaps own frames,
+    // and frame 0
     //
-    // WARNING: never hand out a physical-null address
+    // warning: never hand out a physical null address
     //
-    // unlike marking a region free, here we round the END UP so a partial
+    // unlike marking a region free, here we round the end up so a partial
     // last frame the bitmap spills into still gets reserved
     {
         const start = storage_base / PAGE_SIZE;
@@ -116,8 +116,8 @@ fn reserve(i: usize) void {
     }
 }
 
-// hand out one physical frame, or null if we're out
-// NOTE: returns a physical address
+// hand out one physical frame, or null if were out
+// note: returns a physical address
 pub fn alloc() ?u64 {
     var i = next_hint;
     var scanned: usize = 0;
@@ -136,8 +136,8 @@ pub fn alloc() ?u64 {
 
 // hand out n contiguous physical frames cause the heap needs one flat buffer, and a
 // single usable region is contiguous in physical space, so this just finds a
-// run of n free bits.
-// NOTE: returns the base physical address of the run
+// run of n free bits
+// note: returns the base physical address of the run
 pub fn allocContig(n: usize) ?u64 {
     if (n == 0) return null;
     var i: usize = 0;
@@ -175,7 +175,7 @@ pub fn usableBytes() u64 {
     return @as(u64, usable_frames) * PAGE_SIZE;
 }
 
-// dump the map + totals to serial so we can eyeball what limine gave us.
+// dump the map + totals to serial so we can eyeball what limine gave us
 pub fn dump(memmap: *const limine.MemoryMapResponse) void {
     const entries = memmap.entries.?[0..memmap.entry_count];
     serial.write("memory map:\r\n");

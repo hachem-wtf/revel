@@ -1,6 +1,6 @@
-// this is a minimal 16550 UART driver for COM1, this is mainly going
-// to be used for debugging since its really simple to setup.
-// Fun fact: i was drunk when i wrote this
+// this is a minimal 16550 uart driver for com1, this is mainly going
+// to be used for debugging since its really simple to setup
+// fun fact: i was drunk when i wrote this
 //
 // see: https://wiki.osdev.org/Serial_Ports
 
@@ -25,71 +25,71 @@ inline fn inb(port: u16) u8 {
 // 8 data bits
 // no parity
 // one stop bit
-// FIFO on
-// Idempotent so it should be relatively safe to call
-// from the panic handler.
+// fifo on
+// idempotent so it should be relatively safe to call
+// from the panic handler
 pub fn init() void {
     outb(COM1 + 1, 0x00); // no interrupts
-    outb(COM1 + 3, 0x80); // DLAB on: the next two writes set the baud divisor
+    outb(COM1 + 3, 0x80); // dlab on: the next two writes set the baud divisor
     outb(COM1 + 0, 0x03); // divisor 3 -> 38400 baud (low byte)
     outb(COM1 + 1, 0x00); // divisor high byte
-    outb(COM1 + 3, 0x03); // DLAB off, 8N1
-    outb(COM1 + 2, 0xC7); // enable + clear FIFOs, 14-byte trigger
-    outb(COM1 + 4, 0x0B); // RTS/DSR set
+    outb(COM1 + 3, 0x03); // dlab off, 8n1
+    outb(COM1 + 2, 0xC7); // enable + clear fifos, 14 byte trigger
+    outb(COM1 + 4, 0x0B); // rts/dsr set
 }
 
 // every byte we send to the port is also captured here so the revo
 // console can render the same stream
-var mirror: [1 << 15]u8 = undefined; // 32 KiB, power of two
+var mirror: [1 << 15]u8 = undefined; // 32 kib, power of two
 var m_head: usize = 0; // next byte the console will render
 var m_tail: usize = 0; // next slot putc will write
 
-// COM1+5 (bit 5) = transmit holding register and
-//                  spin until it's clear to send
-fn putc(c: u8) void {
+// com1+5 (bit 5) = transmit holding register and
+//                  spin until its clear to send
+fn putc(byte: u8) void {
     while (inb(COM1 + 5) & 0x20 == 0) {}
-    outb(COM1, c);
-    mirror[m_tail & (mirror.len - 1)] = c;
+    outb(COM1, byte);
+    mirror[m_tail & (mirror.len - 1)] = byte;
     m_tail +%= 1;
 }
 
-// next un-rendered byte, or null if caught up. if the console fell far enough
-// behind to lap the ring, drop the oldest bytes.
+// next un rendered byte, or null if caught up. if the console fell far enough
+// behind to lap the ring, drop the oldest bytes
 pub fn mirrorNext() ?u8 {
     if (m_head == m_tail) return null;
     if (m_tail -% m_head > mirror.len) m_head = m_tail -% mirror.len;
-    const c = mirror[m_head & (mirror.len - 1)];
+    const byte = mirror[m_head & (mirror.len - 1)];
     m_head +%= 1;
-    return c;
+    return byte;
 }
 
-// a raw serial console needs \r\n, but revo (and most sane code) emits bare \n.
+// a raw serial console needs \r\n, but revo (and most sane code) emits bare \n
 // inject the \r ourselves, skipping it when the \n already has one so existing
-// "\r\n" strings don't turn into "\r\r\n".
-pub fn write(s: []const u8) void {
+// "\r\n" strings dont turn into "\r\r\n"
+pub fn write(bytes: []const u8) void {
     var prev: u8 = 0;
-    for (s) |c| {
-        if (c == '\n' and prev != '\r') putc('\r');
-        putc(c);
-        prev = c;
+    for (bytes) |byte| {
+        if (byte == '\n' and prev != '\r') putc('\r');
+        putc(byte);
+        prev = byte;
     }
 }
 
-// dump a u64 as decimal. handy for "usable: N MiB" type logging.
+// dump a u64 as decimal. handy for "usable: n mib" type logging
 pub fn writeDec(value: u64) void {
     if (value == 0) return putc('0');
     var buf: [20]u8 = undefined;
     var i: usize = buf.len;
-    var v = value;
-    while (v > 0) {
+    var remaining = value;
+    while (remaining > 0) {
         i -= 1;
-        buf[i] = '0' + @as(u8, @intCast(v % 10));
-        v /= 10;
+        buf[i] = '0' + @as(u8, @intCast(remaining % 10));
+        remaining /= 10;
     }
     write(buf[i..]);
 }
 
-// dump a u64 as 0x-prefixed 16-digit hex.
+// dump a u64 as 0x prefixed 16 digit hex
 pub fn writeHex(value: u64) void {
     const digits = "0123456789abcdef";
     var buf: [18]u8 = undefined;

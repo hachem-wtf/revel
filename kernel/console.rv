@@ -1,12 +1,12 @@
 const FW = 8            # glyph width in pixels
-const FH = 16           # glyph height in pixels (8x16 VGA bitmap font)
+const FH = 16           # glyph height in pixels (8x16 vga bitmap font)
 const FG = 0xd0d0d0
 const CON_BG = 0x101018
 
-global con = { col = 0, row = 0, scale = 1, cur_on = :true, blink = 0 }
+global con = { col = 0, row = 0, scale = 1, shown = :false, cur_x = 0, cur_y = 0, blink = 0 }
 
-# cell size in pixels at the current zoom. named cell_* (not cw/ch) so they don't
-# collide with draw_glyph's `ch` character parameter.
+# cell size in pixels at the current zoom. named cell_* (not cw/ch) so they dont
+# collide with draw_glyphs `ch` character parameter
 fn cell_w() FW * con.scale
 fn cell_h() FH * con.scale
 fn con_cols() fb_width() / cell_w()
@@ -19,9 +19,9 @@ fn draw_glyph(col, row, ch) do
   const code = ch:ascii()
   if code < 32 return :nil
   if code > 127 return :nil
-  const g = FONT[code - 32]
+  const glyph = FONT[code - 32]
   for fy in 0..FH do
-    const bits = g[fy]
+    const bits = glyph[fy]
     for fx in 0..FW do
       if (bits shr fx) band 1 == 1 fill_rect(x0 + fx * con.scale, y0 + fy * con.scale, con.scale, con.scale, FG)
     end
@@ -37,7 +37,7 @@ fn con_newline() do
   end
 end
 
-# we dont do Shift/Cntrl
+# we dont do shift/cntrl
 # thats a job for future me lmao
 fn con_putc(ch) do
   const code = ch:ascii()
@@ -53,31 +53,61 @@ fn con_putc(ch) do
   if con.col >= con_cols() con_newline()
 end
 
-fn puts(s) serial_puts(s)
+fn puts(str) serial_puts(str)
 
 const CUR = 0x50fa7b
-fn cursor_paint(color) fill_rect(con.col * cell_w(), con.row * cell_h(), cell_w(), cell_h(), color)
-
-global flush_console = fn() do
-  cursor_paint(CON_BG)
-  let c = serial_next()
-  while c >= 0 do
-    con_putc(string.of_ascii(c))
-    c = serial_next()
+# the cursor is an overlay block. its cleared before any drawing and shown after,
+# so it never sits under a glyph, cur_x/cur_y remember where it was actually drawn
+# so we always clear the right cell even after the head moved (backspace etc)
+fn cursor_clear() do
+  if con.shown do
+    fill_rect(con.cur_x * cell_w(), con.cur_y * cell_h(), cell_w(), cell_h(), CON_BG)
+    con.shown = :false
   end
-  # after any output the cursor is solid at the new head restart the blink phase
-  con.cur_on = :true
-  con.blink = 0
-  cursor_paint(CUR)
+end
+fn cursor_show() do
+  con.cur_x = con.col
+  con.cur_y = con.row
+  fill_rect(con.cur_x * cell_w(), con.cur_y * cell_h(), cell_w(), cell_h(), CUR)
+  con.shown = :true
 end
 
-# the PIT fires ~100x/sec
-# blink the cursor every 50 ticks (~2 Hz)
-global on_tick = fn(t) do
+fn drain() do
+  let byte = serial_next()
+  while byte >= 0 do con_putc(string.of_ascii(byte)) byte = serial_next() end
+end
+
+global flush_console = fn() do
+  cursor_clear()
+  drain()
+  con.blink = 0
+  cursor_show()
+end
+
+# called each pit tick from the event loop (scheduler task 0). render any output a
+# running process left in the serial mirror (this is how its writes reach the
+# screen while time sliced), reprint the prompt when one exits, else blink
+global on_tick = fn(ticks) do
+  let byte = serial_next()
+  if byte >= 0 do
+    cursor_clear()
+    con_putc(string.of_ascii(byte))
+    drain()
+    con.blink = 0
+    cursor_show()
+    return :nil
+  end
+  if proc_exited() do
+    cursor_clear()
+    puts("% ")
+    drain()
+    con.blink = 0
+    cursor_show()
+    return :nil
+  end
   con.blink += 1
   if con.blink >= 50 do
     con.blink = 0
-    con.cur_on = not con.cur_on
-    cursor_paint(if con.cur_on CUR else CON_BG)
+    if con.shown cursor_clear() else cursor_show()
   end
 end

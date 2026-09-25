@@ -1,13 +1,13 @@
 # this is just a simple prompt to test that shit is working
-fn cmd_help() puts("commands: help, clear, bars, echo <text>, time, run, zoom in|out\n")
+fn cmd_help() puts("commands: help, clear, bars, echo <text>, time, mem, uptime, ps, run, zoom in|out\n")
 
-fn zoom_by(d) do
-  let s = con.scale + d
-  if s < 1 do s = 1 end
-  if s > 6 do s = 6 end
-  con.scale = s
+fn zoom_by(delta) do
+  let scale = con.scale + delta
+  if scale < 1 do scale = 1 end
+  if scale > 6 do scale = 6 end
+  con.scale = scale
   cmd_clear()
-  puts("zoom " ~ s ~ "x\n")
+  puts("zoom " ~ scale ~ "x\n")
 end
 
 fn cmd_zoom(words) do
@@ -30,25 +30,64 @@ fn cmd_bars() do
   puts("painted 8 bars from revo\n")
 end
 
-fn bcd(b) (b shr 4) * 10 + (b band 15)
+fn bcd(byte) (byte shr 4) * 10 + (byte band 15)
 fn rtc(reg) do
   outb(0x70, reg)
   inb(0x71)
 end
 fn cmd_time() puts("utc " ~ bcd(rtc(4)) ~ ":" ~ bcd(rtc(2)) ~ ":" ~ bcd(rtc(0)) ~ "\n")
 
+# 0x prefixed 16 digit hex, matching the kernels serial writehex
+fn hex(n) do
+  const digits = "0123456789abcdef"
+  let out = ""
+  for i in 0..16 do out = out ~ digits[(n shr ((15 - i) * 4)) band 15] end
+  "0x" ~ out
+end
+
+fn mem_type_name(kind) do
+  if kind == 0 return "usable"
+  if kind == 1 return "reserved"
+  if kind == 2 return "acpi-reclaimable"
+  if kind == 3 return "acpi-nvs"
+  if kind == 4 return "bad"
+  if kind == 5 return "bootloader-reclaimable"
+  if kind == 6 return "kernel+modules"
+  if kind == 7 return "framebuffer"
+  "unknown"
+end
+
+# the boot memory map dump, in revo now (called from kmain once the vm is up)
+fn dump_memmap() do
+  puts("memory map:\n")
+  for i in 0..memmap_count() do
+    puts("  " ~ hex(memmap_base(i)) ~ " len=" ~ hex(memmap_len(i)) ~ " type=" ~ mem_type_name(memmap_kind(i)) ~ "\n")
+  end
+  puts("usable: " ~ (mem_total() shr 20) ~ " MiB, free: " ~ (mem_free() shr 20) ~ " MiB\n")
+end
+
+fn cmd_mem() puts((mem_free() shr 20) ~ " MiB free / " ~ (mem_total() shr 20) ~ " MiB usable\n")
+fn cmd_uptime() puts(math.floor(uptime() / 100) ~ "s (" ~ uptime() ~ " ticks)\n")
+fn cmd_ps() puts(proc_count() ~ " process(es) running\n")
+
 fn run(line) do
-  if line:trim():len() == 0 do puts("> ") return :nil end
+  if line:trim():len() == 0 do puts("% ") return :nil end
   const words = line:split(" ")
   const cmd = words[0]
+  # `run` launches a process, its prompt is reprinted by on_tick when the process
+  # exits (so it lands below the programs output, not before it). return early to
+  # skip the trailing prompt here
+  if cmd == "run" do cmd_run() return :nil end
   match cmd
     | "help" => cmd_help()
     | "clear" => cmd_clear()
     | "bars" => cmd_bars()
     | "time" => cmd_time()
-    | "run" => cmd_run()
+    | "mem" => cmd_mem()
+    | "uptime" => cmd_uptime()
+    | "ps" => cmd_ps()
     | "zoom" => cmd_zoom(words)
     | "echo" => if line:len() > 5 puts(line:sub(5, line:len() - 5) ~ "\n") else puts("\n")
     | _ => puts("unknown command: " ~ cmd ~ "\n")
-  puts("> ")
+  puts("% ")
 end

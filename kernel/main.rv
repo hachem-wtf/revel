@@ -2,9 +2,10 @@
 pic_remap()
 pit_init()
 
-pic_unmask(0)   # PIT      (IRQ0) -> cursor blink / uptime
-pic_unmask(1)   # keyboard (IRQ1)
+pic_unmask(0)   # pit      (irq0) -> cursor blink / uptime
+pic_unmask(1)   # keyboard (irq1)
 
 cmd_clear()
-puts("revel shell, live in revo. type `help`\n> ")
+dump_memmap()
+puts("revel shell, live in revo. type `help`\n% ")
 flush_console()

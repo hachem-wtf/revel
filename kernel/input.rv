@@ -1,10 +1,10 @@
 # keyboard scancode table
-# ts is NOT a good way to write a driver LMAO
+# ts is not a good way to write a driver lmao
 const KBD       = "  1234567890-=  qwertyuiop[]  asdfghjkl;'` \\zxcvbnm,./    "
-# same layout, shifted. index 42 (left shift) / 54 (right shift) stay blank.
+# same layout, shifted. index 42 (left shift) / 54 (right shift) stay blank
 const KBD_SHIFT = "  !@#$%^&*()_+  QWERTYUIOP{}  ASDFGHJKL:\"~ |ZXCVBNM<>?    "
 
-# 8259 PIC
+# 8259 pic
 fn pic_remap() do
   outb(0x20, 0x11)  outb(0xa0, 0x11)
   outb(0x21, 0x20)  outb(0xa1, 0x28)
@@ -14,9 +14,9 @@ fn pic_remap() do
 end
 fn pic_unmask(line) outb(0x21, inb(0x21) band (255 bxor (1 shl line)))
 
-# 8253/8254 PIT channel 0, mode 3 (square wave)
-# divisor 11931 -> ~100 Hz (1193182 / 11931)
-# the ISR just counts ticks
+# 8253/8254 pit channel 0, mode 3 (square wave)
+# divisor 11931 -> ~100 hz (1193182 / 11931)
+# the isr just counts ticks
 fn pit_init() do
   outb(0x43, 0x36)
   outb(0x40, 11931 band 0xff)
@@ -25,33 +25,36 @@ end
 
 # she stroke my keys till i handle
 # no fr this is just a key stroke handler
-global sh = { line = "", shift = :false }
-global on_key = fn(code) do
-  # shift: 0x2a/0x36 press,
-  #        0xaa/0xb6 release
-  # index a blank cell and type a stray space.
-  if code == 0x2a do sh.shift = :true  return :nil end
-  if code == 0x36 do sh.shift = :true  return :nil end
-  if code == 0xaa do sh.shift = :false return :nil end
-  if code == 0xb6 do sh.shift = :false return :nil end
-  if code >= 128 return :nil # other key releases
-  if code == 28 do           # Enter
-    puts("\n")
-    run(sh.line)
-    sh.line = ""
-    return :nil
-  end
-  if code == 14 do           # Backspace
-    if sh.line:len() > 0 do
-      sh.line = sh.line:sub(0, sh.line:len() - 1)
-      puts("\x08 \x08")
-    end
-    return :nil
-  end
+global shell = { line = "", shift = :false }
+
+# decode one scancode to a character string, or :nil for releases / modifiers /
+# unmapped keys. this is the only scancode decoder now, used by both the shell
+# and the read() syscall
+fn decode_key(code) do
+  if code == 0x2a or code == 0x36 do shell.shift = :true  return :nil end # shift down
+  if code == 0xaa or code == 0xb6 do shell.shift = :false return :nil end # shift up
+  if code >= 128 return :nil            # other releases
+  if code == 28 return "\n"             # enter
+  if code == 14 return "\x08"           # backspace
   if code < 2 return :nil
   if code >= KBD:len() return :nil
-  const ch = if sh.shift KBD_SHIFT[code] else KBD[code]
-  if ch == " " and code != 0x39 return :nil
-  sh.line ~= ch
+  const ch = if shell.shift KBD_SHIFT[code] else KBD[code]
+  if ch == " " and code != 0x39 return :nil # blank cells = modifiers/unmapped
+  ch
+end
+
+global on_key = fn(code) do
+  const ch = decode_key(code)
+  if ch == :nil return :nil
+  # a process blocked in read() gets first dibs, if it takes the byte, the shell
+  # doesnt see it (the process echoes its own input via write())
+  if stdin_deliver(ch:ascii()) return :nil
+  # otherwise the shells line editor
+  if ch == "\n" do puts("\n") run(shell.line) shell.line = "" return :nil end
+  if ch == "\x08" do
+    if shell.line:len() > 0 do shell.line = shell.line:sub(0, shell.line:len() - 1) puts("\x08 \x08") end
+    return :nil
+  end
+  shell.line ~= ch
   puts(ch)
 end

@@ -1,17 +1,17 @@
-// this just grabs a contiguous chunk of frams from the PMM and then
-// hands out a bump allocator, this just gives std.mem.Allocator which
-// we'll pass to the revo VM later. FixedBufferAllocator never reclaims
+// this just grabs a contiguous chunk of frams from the pmm and then
+// hands out a bump allocator, this just gives std.mem.allocator which
+// well pass to the revo vm later. fixedbufferallocator never reclaims
 // freed space unless you free in reverse order which is ehhhhh, fine ig
-// for bootstrapping.
+// for bootstrapping
 //
-// TODO: swap fixed buffer allocator for a free list allocator
+// todo: swap fixed buffer allocator for a free list allocator
 
 const std = @import("std");
 const pmm = @import("pmm.zig");
 const serial = @import("serial.zig");
 
-// 32 MiB.
-// NOTE: bump if the VM needs more
+// 32 mib
+// note: bump if the vm needs more
 const HEAP_PAGES: usize = 8192;
 
 var fba: std.heap.FixedBufferAllocator = undefined;
