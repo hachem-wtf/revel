@@ -1,5 +1,5 @@
-// Limine scans the loaded image for these magic numbers, BaseRevision is 
-// a handshake, essentially we ask limine for rev 3, and if it supports it, 
+// Limine scans the loaded image for these magic numbers, BaseRevision is
+// a handshake, essentially we ask limine for rev 3, and if it supports it,
 // limine zeros it out
 pub const BaseRevision = extern struct {
     magic0: u64 = 0xf9562b2d5c95a6c8,
@@ -11,7 +11,7 @@ pub const BaseRevision = extern struct {
     }
 };
 
-// bracketing markers, they are pretty optional but when we add proper 
+// bracketing markers, they are pretty optional but when we add proper
 // limine requests, having these here comes handy
 pub const RequestsStartMarker = extern struct {
     m0: u64 = 0xf6b8f4b39de7d1ae,

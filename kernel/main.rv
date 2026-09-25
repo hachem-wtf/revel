@@ -1,6 +1,10 @@
 # kmain
 pic_remap()
-pic_unmask(1)
+pit_init()
+
+pic_unmask(0)   # PIT      (IRQ0) -> cursor blink / uptime
+pic_unmask(1)   # keyboard (IRQ1)
+
 cmd_clear()
 puts("revel shell, live in revo. type `help`\n> ")
 flush_console()

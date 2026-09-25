@@ -8,6 +8,7 @@ const gdt = @import("gdt.zig");
 const serial = @import("serial.zig");
 const pic = @import("pic.zig");
 const keyboard = @import("keyboard.zig");
+const timer = @import("timer.zig");
 
 // 64bit interrupt gate
 const Gate = packed struct {
@@ -219,6 +220,7 @@ export fn irqCommon() callconv(.naked) void {
 
 export fn irqDispatch(frame: *Frame) callconv(.c) void {
     switch (frame.vector) {
+        pic.MASTER_OFFSET + 0 => timer.onIrq(), // IRQ0: PIT
         pic.MASTER_OFFSET + 1 => keyboard.onIrq(), // IRQ1: keyboard
         else => {},
     }
@@ -242,8 +244,10 @@ pub fn setGate(vector: u8, handler: u64, dpl: u2) void {
 // fill the exception vectors and load the IDT
 pub fn init() void {
     inline for (0..32) |v| setGate(v, @intFromPtr(&stub(v)), 0);
+    // IRQ0 (PIT) -> vector 0x20
     // IRQ1 (keyboard) -> vector 0x21
-    // the PIC is remapped separately in boot.
+    // the PIC is remapped separately in boot
+    setGate(pic.MASTER_OFFSET + 0, @intFromPtr(&irqStub(pic.MASTER_OFFSET + 0)), 0);
     setGate(pic.MASTER_OFFSET + 1, @intFromPtr(&irqStub(pic.MASTER_OFFSET + 1)), 0);
     idtr = .{ .limit = @sizeOf(@TypeOf(idt)) - 1, .base = @intFromPtr(&idt) };
     asm volatile ("lidt (%[idtr])"

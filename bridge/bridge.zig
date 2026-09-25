@@ -496,3 +496,10 @@ fn flushConsole(vm: *revo.VM) void {
     if (f.asFunction() == null) return;
     _ = vm.callFunctionParts(f, null, &.{}, null) catch {};
 }
+
+pub fn onTick(ticks: u64) void {
+    const vm = g_vm orelse return;
+    const cb = vm.getGlobal("on_tick") orelse return;
+    if (cb.asFunction() == null) return;
+    _ = vm.callFunctionParts(cb, null, &[_]revo.Value{revo.Value.new.num(ticks)}, null) catch {};
+}

@@ -20,10 +20,10 @@ var hhdm_offset: u64 = 0;
 // reached through the HHDM, so it's just a normal slice we write through.
 var bitmap: []u8 = &[_]u8{};
 
-var total_frames: usize = 0;  // frames the bitmap can index (up to highest usable end)
+var total_frames: usize = 0; // frames the bitmap can index (up to highest usable end)
 var usable_frames: usize = 0; // frames that started free
-var free_frames: usize = 0;   // frames currently free
-var next_hint: usize = 0;     // where to start the next alloc scan
+var free_frames: usize = 0; // frames currently free
+var next_hint: usize = 0; // where to start the next alloc scan
 
 pub fn physToVirt(phys: u64) u64 {
     return phys + hhdm_offset;
@@ -95,7 +95,7 @@ pub fn init(hhdm: *const limine.HhdmResponse, memmap: *const limine.MemoryMapRes
     //
     // WARNING: never hand out a physical-null address
     //
-    // unlike marking a region free, here we round the END UP so a partial 
+    // unlike marking a region free, here we round the END UP so a partial
     // last frame the bitmap spills into still gets reserved
     {
         const start = storage_base / PAGE_SIZE;
@@ -136,7 +136,7 @@ pub fn alloc() ?u64 {
 
 // hand out n contiguous physical frames cause the heap needs one flat buffer, and a
 // single usable region is contiguous in physical space, so this just finds a
-// run of n free bits. 
+// run of n free bits.
 // NOTE: returns the base physical address of the run
 pub fn allocContig(n: usize) ?u64 {
     if (n == 0) return null;

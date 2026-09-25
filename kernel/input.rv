@@ -14,6 +14,15 @@ fn pic_remap() do
 end
 fn pic_unmask(line) outb(0x21, inb(0x21) band (255 bxor (1 shl line)))
 
+# 8253/8254 PIT channel 0, mode 3 (square wave)
+# divisor 11931 -> ~100 Hz (1193182 / 11931)
+# the ISR just counts ticks
+fn pit_init() do
+  outb(0x43, 0x36)
+  outb(0x40, 11931 band 0xff)
+  outb(0x40, (11931 shr 8) band 0xff)
+end
+
 # she stroke my keys till i handle
 # no fr this is just a key stroke handler
 global sh = { line = "", shift = :false }

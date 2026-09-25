@@ -10,6 +10,7 @@ const vmm = @import("vmm.zig");
 const user = @import("user.zig");
 const elf = @import("elf.zig");
 const keyboard = @import("keyboard.zig");
+const timer = @import("timer.zig");
 const bridge = @import("bridge");
 
 // We need a panic handler otherwise zig won't be happy,
@@ -166,11 +167,16 @@ export fn _start() callconv(.c) noreturn {
     // the cli/pop/sti-hlt bullshit closes the lost-wakeup race (a key
     // arriving between "queue empty" and hlt would otherwise sit until
     // the next keypress)
+    var last_ticks: u64 = 0;
     while (true) {
         asm volatile ("cli");
         if (keyboard.pop()) |sc| {
             asm volatile ("sti");
             bridge.onKey(sc);
+        } else if (timer.now() != last_ticks) {
+            last_ticks = timer.now();
+            asm volatile ("sti");
+            bridge.onTick(last_ticks);
         } else {
             asm volatile ("sti; hlt");
         }

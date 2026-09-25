@@ -3,7 +3,7 @@ const FH = 16           # glyph height in pixels (8x16 VGA bitmap font)
 const FG = 0xd0d0d0
 const CON_BG = 0x101018
 
-global con = { col = 0, row = 0, scale = 1 }
+global con = { col = 0, row = 0, scale = 1, cur_on = :true, blink = 0 }
 
 # cell size in pixels at the current zoom. named cell_* (not cw/ch) so they don't
 # collide with draw_glyph's `ch` character parameter.
@@ -65,5 +65,19 @@ global flush_console = fn() do
     con_putc(string.of_ascii(c))
     c = serial_next()
   end
+  # after any output the cursor is solid at the new head restart the blink phase
+  con.cur_on = :true
+  con.blink = 0
   cursor_paint(CUR)
+end
+
+# the PIT fires ~100x/sec
+# blink the cursor every 50 ticks (~2 Hz)
+global on_tick = fn(t) do
+  con.blink += 1
+  if con.blink >= 50 do
+    con.blink = 0
+    con.cur_on = not con.cur_on
+    cursor_paint(if con.cur_on CUR else CON_BG)
+  end
 end
