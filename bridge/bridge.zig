@@ -293,6 +293,11 @@ pub const KernelOps = struct {
     proc_count: *const fn () u64,
     elf_phys: u64,
     elf_size: u64,
+    // block device, the filesystem in revo drives these (512 byte sectors)
+    disk_present: *const fn () u64,
+    disk_sectors: *const fn () u64,
+    disk_read: *const fn (u64, u64) u64, // lba, phys buf -> 1 ok / 0 fail
+    disk_write: *const fn (u64, u64) u64, // lba, phys buf -> 1 ok / 0 fail
 };
 var g_kops: ?KernelOps = null;
 
@@ -445,6 +450,30 @@ fn hostProcCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(ops.proc_count()));
 }
 
+fn hostDiskPresent(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    return HostResult.data(Data.new.num(ops.disk_present()));
+}
+
+fn hostDiskSectors(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    return HostResult.data(Data.new.num(ops.disk_sectors()));
+}
+
+fn hostDiskRead(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    const lba = argInt(u64, args, 0) orelse return HostResult.other("disk_read: bad lba");
+    const phys = argInt(u64, args, 1) orelse return HostResult.other("disk_read: bad phys");
+    return HostResult.data(Data.new.num(ops.disk_read(lba, phys)));
+}
+
+fn hostDiskWrite(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const ops = g_kops orelse return HostResult.other("no kernel ops");
+    const lba = argInt(u64, args, 0) orelse return HostResult.other("disk_write: bad lba");
+    const phys = argInt(u64, args, 1) orelse return HostResult.other("disk_write: bad phys");
+    return HostResult.data(Data.new.num(ops.disk_write(lba, phys)));
+}
+
 fn registerPrimitives(vm: *revo.VM) !void {
     const define = revo.baselib.host.define;
     const T = revo.baselib.host.ParamType;
@@ -455,7 +484,7 @@ fn registerPrimitives(vm: *revo.VM) !void {
     try vm.registerGlobal("fb_height", try vm.installHost("fb_height", define(&[_]T{}, hostFbHeight)));
     try vm.registerGlobal("fill_rect", try vm.installHost("fill_rect", define(&[_]T{ .number, .number, .number, .number, .number }, hostFillRect)));
     try vm.registerGlobal("fb_scroll", try vm.installHost("fb_scroll", define(&[_]T{ .number, .number }, hostFbScroll)));
-    // low level: memory + address spaces + process launch (revos elf loader)
+
     try vm.registerGlobal("mem_read", try vm.installHost("mem_read", define(&[_]T{ .number, .number }, hostMemRead)));
     try vm.registerGlobal("mem_copy", try vm.installHost("mem_copy", define(&[_]T{ .number, .number, .number }, hostMemCopy)));
     try vm.registerGlobal("mem_zero", try vm.installHost("mem_zero", define(&[_]T{ .number, .number }, hostMemZero)));
@@ -477,6 +506,11 @@ fn registerPrimitives(vm: *revo.VM) !void {
     try vm.registerGlobal("mem_total", try vm.installHost("mem_total", define(&[_]T{}, hostMemTotal)));
     try vm.registerGlobal("uptime", try vm.installHost("uptime", define(&[_]T{}, hostUptime)));
     try vm.registerGlobal("proc_count", try vm.installHost("proc_count", define(&[_]T{}, hostProcCount)));
+
+    try vm.registerGlobal("disk_present", try vm.installHost("disk_present", define(&[_]T{}, hostDiskPresent)));
+    try vm.registerGlobal("disk_sectors", try vm.installHost("disk_sectors", define(&[_]T{}, hostDiskSectors)));
+    try vm.registerGlobal("disk_read", try vm.installHost("disk_read", define(&[_]T{ .number, .number }, hostDiskRead)));
+    try vm.registerGlobal("disk_write", try vm.installHost("disk_write", define(&[_]T{ .number, .number }, hostDiskWrite)));
 }
 
 // the vm outlives boot() now, so we juts make this hoe static
@@ -485,6 +519,7 @@ var g_vm: ?*revo.VM = null;
 const init_program = @embedFile("k_font") ++ "\n" ++
     @embedFile("k_console") ++ "\n" ++
     @embedFile("k_vmm") ++ "\n" ++
+    @embedFile("k_fs") ++ "\n" ++
     @embedFile("k_proc") ++ "\n" ++
     @embedFile("k_shell") ++ "\n" ++
     @embedFile("k_input") ++ "\n" ++

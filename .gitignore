@@ -8,6 +8,9 @@
 /iso_root/
 /*.iso
 
+# persistent fs disk image
+/*.img
+
 # local boot scratch (screendumps, qemu logs)
 /*.ppm
 /*.png

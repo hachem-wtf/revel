@@ -2,10 +2,16 @@
 pic_remap()
 pit_init()
 
-pic_unmask(0)   # pit      (irq0) -> cursor blink / uptime
-pic_unmask(1)   # keyboard (irq1)
+pic_unmask(0) # pit      (irq0) -> cursor blink / uptime
+pic_unmask(1) # keyboard (irq1)
 
 cmd_clear()
 dump_memmap()
+
+fs_init()
+if disk_present() == 0 puts("no disk attached\n")
+else if fs.ready puts("mounted revelfs on disk\n")
+else puts("disk has no filesystem, run `mkfs`\n")
+
 puts("revel shell, live in revo. type `help`\n% ")
 flush_console()

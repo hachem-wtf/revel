@@ -12,6 +12,7 @@ const elf = @import("elf.zig");
 const keyboard = @import("keyboard.zig");
 const timer = @import("timer.zig");
 const sched = @import("sched.zig");
+const ata = @import("ata.zig");
 const bridge = @import("bridge");
 
 // we need a panic handler otherwise zig wont be happy,
@@ -100,6 +101,22 @@ fn kProcCount() u64 {
     return sched.procCount();
 }
 
+// block device, revo builds the filesystem on top of these
+fn kDiskPresent() u64 {
+    return if (ata.present()) 1 else 0;
+}
+fn kDiskSectors() u64 {
+    return ata.sectorCount();
+}
+fn kDiskRead(lba: u64, phys: u64) u64 {
+    const buf: *[ata.SECTOR]u8 = @ptrFromInt(pmm.physToVirt(phys));
+    return if (ata.read(@truncate(lba), buf)) 1 else 0;
+}
+fn kDiskWrite(lba: u64, phys: u64) u64 {
+    const buf: *const [ata.SECTOR]u8 = @ptrFromInt(pmm.physToVirt(phys));
+    return if (ata.write(@truncate(lba), buf)) 1 else 0;
+}
+
 // entry(_start)
 export fn _start() callconv(.c) noreturn {
     serial.init();
@@ -124,6 +141,7 @@ export fn _start() callconv(.c) noreturn {
 
     pmmSelfTest();
     vmmSelfTest();
+    ata.init();
 
     const elf_pages = (elf.hello_elf.len + 4095) / 4096;
     const elf_phys = pmm.allocContig(elf_pages) orelse @panic("no room for the embedded ELF");
@@ -150,6 +168,10 @@ export fn _start() callconv(.c) noreturn {
         .proc_count = &kProcCount,
         .elf_phys = elf_phys,
         .elf_size = elf.hello_elf.len,
+        .disk_present = &kDiskPresent,
+        .disk_sectors = &kDiskSectors,
+        .disk_read = &kDiskRead,
+        .disk_write = &kDiskWrite,
     };
 
     // hand the kernel heap + framebuffer + low level ops to revo and bring up the vm

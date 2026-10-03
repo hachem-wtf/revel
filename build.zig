@@ -67,6 +67,7 @@ pub fn build(b: *std.Build) void {
         .{ "k_font", "kernel/font.rv" },
         .{ "k_console", "kernel/console.rv" },
         .{ "k_vmm", "kernel/vmm.rv" },
+        .{ "k_fs", "kernel/fs.rv" },
         .{ "k_proc", "kernel/proc.rv" },
         .{ "k_shell", "kernel/shell.rv" },
         .{ "k_input", "kernel/input.rv" },

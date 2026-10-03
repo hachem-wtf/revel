@@ -1,7 +1,7 @@
 # parse the embedded elf (physical address from elf_phys()) and run it in ring 3
 
 const PT_LOAD = 1
-const PAGE_FLAGS = 6      # write | user
+const PAGE_FLAGS = 6 # write | user
 
 fn cmd_run() do
   const base = elf_phys()

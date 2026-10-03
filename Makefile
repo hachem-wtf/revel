@@ -9,8 +9,10 @@ QEMU ?= qemu-system-x86_64
 
 KERNEL := zig-out/bin/revel
 ISO    := revel.iso
+DISK   := revel-disk.img
+DISK_MB := 16
 
-.PHONY: all kernel iso run clean distclean
+.PHONY: all kernel iso run clean distclean wipedisk
 
 all: iso
 
@@ -42,8 +44,20 @@ iso: kernel limine/limine
     iso_root -o $(ISO)
 	./limine/limine bios-install $(ISO)
 
-run: iso
-	$(QEMU) -M q35 -m 256M -cdrom $(ISO) -boot d -no-reboot -no-shutdown
+# persistent scratch disk for the filesystem. survives across boots and across
+# `make clean`, blow it away by hand or with `make wipedisk` if you want a fresh one
+$(DISK):
+	qemu-img create -f raw $(DISK) $(DISK_MB)M
+
+wipedisk:
+	rm -f $(DISK)
+
+# -M pc (i440fx) not q35, we want the piix3 legacy ide controller at the classic
+# 0x1F0 ports so the ata pio driver can find the disk. q35 only gives you ahci
+run: iso $(DISK)
+	$(QEMU) -M pc -m 256M -cdrom $(ISO) -boot d \
+   -drive file=$(DISK),format=raw,if=ide \
+   -no-reboot -no-shutdown
 
 clean:
 	rm -rf iso_root zig-out .zig-cache $(ISO)

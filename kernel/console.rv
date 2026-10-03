@@ -1,5 +1,5 @@
-const FW = 8            # glyph width in pixels
-const FH = 16           # glyph height in pixels (8x16 vga bitmap font)
+const FW = 8  # glyph width in pixels
+const FH = 16 # glyph height in pixels (8x16 vga bitmap font)
 const FG = 0xd0d0d0
 const CON_BG = 0x101018
 
@@ -39,6 +39,7 @@ end
 
 # we dont do shift/cntrl
 # thats a job for future me lmao
+# NOTE: future me kinda delt with it, i was mad drunk
 fn con_putc(ch) do
   const code = ch:ascii()
   if code == 10 do con_newline() return :nil end # \n
@@ -58,7 +59,7 @@ fn puts(str) serial_puts(str)
 const CUR = 0x50fa7b
 # the cursor is an overlay block. its cleared before any drawing and shown after,
 # so it never sits under a glyph, cur_x/cur_y remember where it was actually drawn
-# so we always clear the right cell even after the head moved (backspace etc)
+# so we always clear the right cell even after the head moved (backspace and shit)
 fn cursor_clear() do
   if con.shown do
     fill_rect(con.cur_x * cell_w(), con.cur_y * cell_h(), cell_w(), cell_h(), CON_BG)
@@ -84,9 +85,6 @@ global flush_console = fn() do
   cursor_show()
 end
 
-# called each pit tick from the event loop (scheduler task 0). render any output a
-# running process left in the serial mirror (this is how its writes reach the
-# screen while time sliced), reprint the prompt when one exits, else blink
 global on_tick = fn(ticks) do
   let byte = serial_next()
   if byte >= 0 do

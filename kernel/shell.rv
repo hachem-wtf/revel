@@ -1,5 +1,16 @@
 # this is just a simple prompt to test that shit is working
-fn cmd_help() puts("commands: help, clear, bars, echo <text>, time, mem, uptime, ps, run, zoom in|out\n")
+fn cmd_help() do
+  puts("commands: help, clear, bars, echo <text>, time, mem, uptime, ps, run, zoom in|out\n")
+  puts("fs: mkfs, ls, cat <name>, write <name> <text>, rm <name>\n")
+end
+
+fn cmd_write(line, words) do
+  if words:len() < 2 do puts("usage: write <name> <text>\n") return :nil end
+  const name = words[1]
+  const start = 6 + name:len() + 1
+  const text = if line:len() > start line:sub(start, line:len() - start) else ""
+  fs_write(name, text)
+end
 
 fn zoom_by(delta) do
   let scale = con.scale + delta
@@ -37,7 +48,7 @@ fn rtc(reg) do
 end
 fn cmd_time() puts("utc " ~ bcd(rtc(4)) ~ ":" ~ bcd(rtc(2)) ~ ":" ~ bcd(rtc(0)) ~ "\n")
 
-# 0x prefixed 16 digit hex, matching the kernels serial writehex
+# 0x prefixed 16 digit hex
 fn hex(n) do
   const digits = "0123456789abcdef"
   let out = ""
@@ -57,7 +68,7 @@ fn mem_type_name(kind) do
   "unknown"
 end
 
-# the boot memory map dump, in revo now (called from kmain once the vm is up)
+# the boot memory map dump
 fn dump_memmap() do
   puts("memory map:\n")
   for i in 0..memmap_count() do
@@ -74,9 +85,6 @@ fn run(line) do
   if line:trim():len() == 0 do puts("% ") return :nil end
   const words = line:split(" ")
   const cmd = words[0]
-  # `run` launches a process, its prompt is reprinted by on_tick when the process
-  # exits (so it lands below the programs output, not before it). return early to
-  # skip the trailing prompt here
   if cmd == "run" do cmd_run() return :nil end
   match cmd
     | "help" => cmd_help()
@@ -87,6 +95,11 @@ fn run(line) do
     | "uptime" => cmd_uptime()
     | "ps" => cmd_ps()
     | "zoom" => cmd_zoom(words)
+    | "mkfs" => fs_format()
+    | "ls" => fs_ls()
+    | "cat" => if words:len() > 1 fs_cat(words[1]) else puts("usage: cat <name>\n")
+    | "write" => cmd_write(line, words)
+    | "rm" => if words:len() > 1 fs_rm(words[1]) else puts("usage: rm <name>\n")
     | "echo" => if line:len() > 5 puts(line:sub(5, line:len() - 5) ~ "\n") else puts("\n")
     | _ => puts("unknown command: " ~ cmd ~ "\n")
   puts("% ")
