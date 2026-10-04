@@ -1,6 +1,3 @@
-// hexview, a ring 3 program that dumps a file from the revel fs. nav is n/p/q
-// since the keyboard only gives us decoded ascii, no arrow keys yet
-
 #include "user.h"
 
 static const char HEX[] = "0123456789abcdef";
