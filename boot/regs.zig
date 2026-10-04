@@ -24,10 +24,8 @@ pub const Frame = extern struct {
     ss: u64,
 };
 
-// push/pop the 15 gprs in frames exact order (rax pushed first -> highest field,
-// r15 last -> at rsp = &frame). shared by every save/restore stub so they cant
-// drift from the frame layout above. `mov %rsp, %rdi` after push_gprs hands the
-// handler a *frame
+// push/pop the 15 gprs in frames exact order 
+// (rax pushed first -> highest field, r15 last -> at rsp = &frame)
 pub const PUSH_GPRS =
     \\push %rax
     \\push %rbx

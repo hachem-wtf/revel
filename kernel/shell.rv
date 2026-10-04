@@ -1,42 +1,80 @@
 # this is just a simple prompt to test that shit is working
+
+fn pad(s, width) do
+  let out = s
+  while out:len() < width do out = out ~ " " end
+  return out
+end
+
+fn help_row(cmd, desc) puts("    #{pad(cmd, 20)}#{desc}\n")
+
 fn cmd_help() do
-  puts("commands: help, clear, bars, echo <text>, time, mem, uptime, ps, run <prog>, zoom in|out\n")
-  puts("fs: mkfs, ls, cat <name>, write <name> <text>, rm <name>\n")
-  puts("    names with spaces go in \"quotes\"\n")
+  puts("\n  shell\n")
+  help_row("help", "show this")
+  help_row("clear", "wipe the screen")
+  help_row("time", "utc clock")
+  help_row("mem", "free / total ram")
+  help_row("uptime", "seconds since boot")
+  help_row("ps", "running processes")
+  help_row("zoom in|out", "scale the font")
+  help_row("echo <text>", "print it back")
+  puts("\n  files\n")
+  help_row("ls", "list files")
+  help_row("cat <name>", "print a file")
+  help_row("write <name> <text>", "create or overwrite")
+  help_row("rm <name>", "delete a file")
+  help_row("mkfs", "format the disk")
+  puts("\n  programs\n")
+  help_row("run", "list programs")
+  help_row("run <name>", "")
+  puts("\n")
+end
+
+fn welcome() do
+  let fsline = "no filesystem"
+  if fs.ready do fsline = "revelfs mounted" end
+  puts("\n")
+  puts("   a tiny os whose brain lives in revo, zig only touches the metal\n")
+  puts("   #{(mem_total() shr 20)} MiB ram | #{fsline} | #{prog_count()} programs\n")
+  puts("   type help to see what it does\n\n% ")
 end
 
 fn arg_name(line, start) do
-  let i = start
-  let name = ""
-  if (i < line:len() and line[i]:ascii() == 34) do
-    i += 1
-    while (i < line:len() and line[i]:ascii() != 34) do name = name ~ line[i] i += 1 end
-    if i < line:len() do i += 1 end
+  let quoted = :false
+  let begin = start
+  if (begin < line:len() and line[begin] == "\"") do begin += 1 quoted = :true end
+  # scan to the end of the name, a closing quote or a space depending on how it opened
+  let i = begin
+  if quoted do
+    while (i < line:len() and line[i] != "\"") do i += 1 end
   end
   else do
-    while (i < line:len() and line[i]:ascii() != 32) do name = name ~ line[i] i += 1 end
+    while (i < line:len() and line[i] != " ") do i += 1 end
   end
-  if (i < line:len() and line[i]:ascii() == 32) do i += 1 end
-  { name = name, rest = i }
+  const name = line[begin..i]
+  # step past the closing quote and the separating space so rest points at the text
+  let rest = i
+  if (quoted and rest < line:len()) do rest += 1 end
+  if (rest < line:len() and line[rest] == " ") do rest += 1 end
+  { name = name, rest = rest }
 end
 
 fn cmd_write(line) do
   const a = arg_name(line, 6)
   if a.name:len() == 0 do puts("usage: write <name> <text>\n") return :nil end
-  const text = if line:len() > a.rest line:sub(a.rest, line:len() - a.rest) else ""
-  fs_write(a.name, text)
+  fs:write(a.name, line[a.rest..])
 end
 
 fn cmd_cat(line) do
   const a = arg_name(line, 4)
   if a.name:len() == 0 do puts("usage: cat <name>\n") return :nil end
-  fs_cat(a.name)
+  fs:cat(a.name)
 end
 
 fn cmd_rm(line) do
   const a = arg_name(line, 3)
   if a.name:len() == 0 do puts("usage: rm <name>\n") return :nil end
-  fs_rm(a.name)
+  fs:rm(a.name)
 end
 
 fn zoom_by(delta) do
@@ -45,7 +83,7 @@ fn zoom_by(delta) do
   if scale > 6 do scale = 6 end
   con.scale = scale
   cmd_clear()
-  puts("zoom " ~ scale ~ "x\n")
+  puts("zoom #{scale}x\n")
 end
 
 fn cmd_zoom(words) do
@@ -55,32 +93,21 @@ fn cmd_zoom(words) do
   else do puts("usage: zoom in | zoom out\n") end
 end
 
-fn cmd_clear() do
-  fill_rect(0, 0, fb_width(), fb_height(), CON_BG)
-  con.col = 0
-  con.row = 0
-end
-
-fn cmd_bars() do
-  const bars = { 0xff5555, 0xffaa00, 0xffff55, 0x55ff55, 0x55ffff, 0x5599ff, 0xaa55ff, 0xffffff }
-  const bw = fb_width() / 8
-  for i in 0..8 do fill_rect(i * bw, 0, bw, 40, bars[i]) end
-  puts("painted 8 bars from revo\n")
-end
+fn cmd_clear() con:clear()
 
 fn bcd(byte) (byte shr 4) * 10 + (byte band 15)
 fn rtc(reg) do
   outb(0x70, reg)
   inb(0x71)
 end
-fn cmd_time() puts("utc " ~ bcd(rtc(4)) ~ ":" ~ bcd(rtc(2)) ~ ":" ~ bcd(rtc(0)) ~ "\n")
+fn cmd_time() puts("utc #{bcd(rtc(4))}:#{bcd(rtc(2))}:#{bcd(rtc(0))}\n")
 
 # 0x prefixed 16 digit hex
 fn hex(n) do
   const digits = "0123456789abcdef"
   let out = ""
   for i in 0..16 do out = out ~ digits[(n shr ((15 - i) * 4)) band 15] end
-  "0x" ~ out
+  "0x#{out}"
 end
 
 fn mem_type_name(kind) do
@@ -99,21 +126,19 @@ end
 fn dump_memmap() do
   puts("memory map:\n")
   for i in 0..memmap_count() do
-    puts("  " ~ hex(memmap_base(i)) ~ " len=" ~ hex(memmap_len(i)) ~ " type=" ~ mem_type_name(memmap_kind(i)) ~ "\n")
+    puts("  #{hex(memmap_base(i))} len=#{hex(memmap_len(i))} type=#{mem_type_name(memmap_kind(i))}\n")
   end
-  puts("usable: " ~ (mem_total() shr 20) ~ " MiB, free: " ~ (mem_free() shr 20) ~ " MiB\n")
+  puts("usable: #{(mem_total() shr 20)} MiB, free: #{(mem_free() shr 20)} MiB\n")
 end
 
-fn cmd_mem() puts((mem_free() shr 20) ~ " MiB free / " ~ (mem_total() shr 20) ~ " MiB usable\n")
-fn cmd_uptime() puts(math.floor(uptime() / 100) ~ "s (" ~ uptime() ~ " ticks)\n")
-fn cmd_ps() puts(proc_count() ~ " process(es) running\n")
+fn cmd_mem() puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB usable\n")
+fn cmd_uptime() puts("#{math.floor(uptime() / 100)}s (#{uptime()} ticks)\n")
+fn cmd_ps() puts("#{proc_count()} process(es) running\n")
 
 fn run(line) do
   if line:trim():len() == 0 do puts("% ") return :nil end
   const words = line:split(" ")
   const cmd = words[0]
-  # run launches a process, its prompt gets reprinted by on_tick when it exits so
-  # it lands below the programs output. no arg just lists whats available
   if cmd == "run" do
     if words:len() <= 1 do list_progs() puts("% ") return :nil end
     if run_prog(words[1]) == :true return :nil
@@ -123,18 +148,17 @@ fn run(line) do
   match cmd
     | "help" => cmd_help()
     | "clear" => cmd_clear()
-    | "bars" => cmd_bars()
     | "time" => cmd_time()
     | "mem" => cmd_mem()
     | "uptime" => cmd_uptime()
     | "ps" => cmd_ps()
     | "zoom" => cmd_zoom(words)
-    | "mkfs" => fs_format()
-    | "ls" => fs_ls()
+    | "mkfs" => fs:format()
+    | "ls" => fs:ls()
     | "cat" => cmd_cat(line)
     | "write" => cmd_write(line)
     | "rm" => cmd_rm(line)
-    | "echo" => if line:len() > 5 puts(line:sub(5, line:len() - 5) ~ "\n") else puts("\n")
-    | _ => puts("unknown command: " ~ cmd ~ "\n")
+    | "echo" => if line:len() > 5 puts("#{line[5..]}\n") else puts("\n")
+    | _ => puts("unknown command: #{cmd}\n")
   puts("% ")
 end

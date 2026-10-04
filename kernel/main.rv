@@ -8,15 +8,12 @@ pic_unmask(1) # keyboard (irq1)
 cmd_clear()
 dump_memmap()
 
-fs_init()
-if disk_sectors() == 0 puts("no disk attached\n")
-else if fs.ready puts("mounted revelfs on disk\n")
-else do
-  # blank disk, first boot after a clone. format it and drop the default files on
+fs:mount()
+if (disk_sectors() != 0 and fs.ready == :false) do
   puts("blank disk, formatting + seeding default files\n")
-  fs_format()
+  fs:format()
   seed_fs()
 end
 
-puts("revel shell, live in revo. type `help`\n% ")
+welcome()
 flush_console()

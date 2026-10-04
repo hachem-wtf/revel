@@ -303,7 +303,6 @@ pub const KernelOps = struct {
 };
 var g_kops: ?KernelOps = null;
 
-// every host fn needs the kernel ops, boot wires them before the vm ever runs
 fn kops() KernelOps {
     return g_kops.?;
 }
@@ -418,27 +417,34 @@ fn hostProgName(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
 fn hostMemmapCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(kops().memmap_count()));
 }
+
 fn hostMemmapBase(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const index = argInt(u64, args, 0) orelse return HostResult.other("memmap_base: bad index");
     return HostResult.data(Data.new.num(kops().memmap_base(index)));
 }
+
 fn hostMemmapLen(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const index = argInt(u64, args, 0) orelse return HostResult.other("memmap_len: bad index");
     return HostResult.data(Data.new.num(kops().memmap_len(index)));
 }
+
 fn hostMemmapKind(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const index = argInt(u64, args, 0) orelse return HostResult.other("memmap_kind: bad index");
     return HostResult.data(Data.new.num(kops().memmap_kind(index)));
 }
+
 fn hostMemFree(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(kops().mem_free()));
 }
+
 fn hostMemTotal(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(kops().mem_total()));
 }
+
 fn hostUptime(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(kops().uptime()));
 }
+
 fn hostProcCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(kops().proc_count()));
 }
@@ -611,15 +617,11 @@ pub fn onTick(ticks: u64) void {
     _ = vm.callFunctionParts(cb, null, &[_]revo.Value{revo.Value.new.num(ticks)}, null) catch {};
 }
 
-// true while revo bytecode runs, sched.tick wont preempt task 0 mid call so the
-// shared fiber cant be re-entered
 var g_vm_running: bool = false;
 pub fn vmBusy() bool {
     return g_vm_running;
 }
 
-// fs access for ring 3 programs, called from the int 0x80 handler (interrupts
-// off) straight into the revo fs
 pub fn fsSize(name: []const u8) i64 {
     const vm = g_vm orelse return -1;
     const func = vm.getGlobal("fs_size") orelse return -1;

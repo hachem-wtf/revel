@@ -1,5 +1,5 @@
 # js dw about this ok?
 fn seed_fs() do
-  fs_write("i have big balls.txt", "dude my balls are actually massive")
-  fs_write("balls.txt", "its lowk insane how big my balls are")
+  fs:write("i have big balls.txt", "dude my balls are actually massive")
+  fs:write("balls.txt", "its lowk insane how big my balls are")
 end

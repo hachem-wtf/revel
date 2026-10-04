@@ -43,12 +43,12 @@ fn run_prog(name) do
   for i in 0..prog_count() do
     if prog_name(i) == name do load_elf(prog_phys(i)) return :true end
   end
-  puts("no such program: " ~ name ~ "\n")
+  puts("no such program: #{name}\n")
   return :false
 end
 
 fn list_progs() do
   puts("programs:")
-  for i in 0..prog_count() do puts(" " ~ prog_name(i)) end
+  for i in 0..prog_count() do puts(" #{prog_name(i)}") end
   puts("\n")
 end
