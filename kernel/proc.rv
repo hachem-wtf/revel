@@ -2,8 +2,9 @@
 
 const PT_LOAD = 1
 const PAGE_FLAGS = 6 # write | user
+const ARG_VADDR = 0x50000000 # where we map the argument string in the new space
 
-fn load_elf(base) do
+fn load_elf(base, arg) do
   if mem_read(base, 4) != 0x464c457f do
     puts("not an ELF\n")
     return :nil
@@ -34,14 +35,24 @@ fn load_elf(base) do
     end
   end
   const stack_top = 0x7fff0000
-  as_map(space, stack_top - 4096, frame_alloc(), PAGE_FLAGS)
-  proc_run(space, entry, stack_top)
+  for p in 0..4 do as_map(space, stack_top - (p + 1) * 4096, frame_alloc(), PAGE_FLAGS) end
+  let arg_ptr = 0
+  const arg_len = arg:len()
+  if arg_len > 0 do
+    const argframe = frame_alloc()
+    mem_zero(argframe, 4096)
+    for k in 0..arg_len do mem_write(argframe + k, arg[k]:ascii(), 1) end
+    as_map(space, ARG_VADDR, argframe, PAGE_FLAGS)
+    arg_ptr = ARG_VADDR
+  end
+  proc_run(space, entry, stack_top, arg_ptr, arg_len)
 end
 
-# launch a program by name, :true if one matched
-fn run_prog(name) do
+fn run_prog(name, arg) do
+  let n = name
+  if n:starts_with?("/bin/") n = n[5..]
   for i in 0..prog_count() do
-    if prog_name(i) == name do load_elf(prog_phys(i)) return :true end
+    if prog_name(i) == n do load_elf(prog_phys(i), arg) return :true end
   end
   puts("no such program: #{name}\n")
   return :false

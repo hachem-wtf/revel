@@ -68,6 +68,7 @@ pub fn build(b: *std.Build) void {
         .{ "k_console", "kernel/console.rv" },
         .{ "k_vmm", "kernel/vmm.rv" },
         .{ "k_fs", "kernel/fs.rv" },
+        .{ "k_vfs", "kernel/vfs.rv" },
         .{ "k_seed", "kernel/seed.rv" },
         .{ "k_proc", "kernel/proc.rv" },
         .{ "k_shell", "kernel/shell.rv" },
@@ -81,7 +82,7 @@ pub fn build(b: *std.Build) void {
 
     // each ring 3 program compiles to its own freestanding elf, embedded under
     // user_<name>. boot copies them to frames and the shells `run <name>` loads one
-    inline for (.{ "hexview", "calc", "primes" }) |prog| {
+    inline for (.{ "hexview", "calc", "primes", "save" }) |prog| {
         const cc = b.addSystemCommand(&.{
             "zig",                  "cc",
             "-target",              "x86_64-freestanding",

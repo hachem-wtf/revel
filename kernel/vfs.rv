@@ -1,0 +1,57 @@
+# shitty vfs implementation
+# proc and /bin arent on disk, theyre completely virtual
+
+const TASK_STATES = { "free", "ready", "dead", "blocked" }
+
+fn vfs_owns(path) do
+  if path == "/proc" or path:starts_with?("/proc/") return :true
+  if path == "/bin" or path:starts_with?("/bin/") return :true
+  return :false
+end
+
+fn parse_pid(s) do
+  if s:len() == 0 return -1
+  let n = 0
+  for i in 0..s:len() do
+    const c = s[i]:ascii()
+    if c < 48 or c > 57 return -1
+    n = n * 10 + (c - 48)
+  end
+  return n
+end
+
+fn vfs_ls(path) do
+  if path == "/proc" do
+    puts("  uptime\n  meminfo\n")
+    for i in 0..task_max() do
+      if task_state(i) != 0 puts("  #{i}\n")
+    end
+  end
+  else if path == "/bin" do
+    for i in 0..prog_count() do puts("  #{prog_name(i)}\n") end
+  end
+  else do puts("ls: #{path}: no such directory\n") end
+end
+
+fn vfs_cat(path) do
+  if path == "/proc/uptime" do puts("#{math.floor(uptime() / 100)}s\n") return :nil end
+  if path == "/proc/meminfo" do puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB total\n") return :nil end
+  if path:starts_with?("/proc/") do
+    const pid = parse_pid(path[6..])
+    if pid >= 0 and pid < task_max() and task_state(pid) != 0 do
+      puts("pid #{pid}: #{TASK_STATES[task_state(pid)]}\n")
+      return :nil
+    end
+    puts("cat: #{path}: no such file\n")
+    return :nil
+  end
+  if path:starts_with?("/bin/") do
+    const nm = path[5..]
+    for i in 0..prog_count() do
+      if prog_name(i) == nm do puts("#{nm}: elf program, #{prog_size(i)} bytes\n") return :nil end
+    end
+    puts("cat: #{path}: no such file\n")
+    return :nil
+  end
+  puts("cat: #{path}: no such file\n")
+end

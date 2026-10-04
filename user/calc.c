@@ -23,6 +23,7 @@ void _start(void)
         int valid = 1;
         int saw_number = 0;
         int position = 0;
+
         while (position < length)
         {
             char character = line[position];
@@ -31,11 +32,13 @@ void _start(void)
                 position++;
                 continue;
             }
+
             if (is_digit(character))
             {
                 long value = 0;
                 while (position < length && is_digit(line[position]))
                     value = value * 10 + (line[position++] - '0');
+
                 if (operator == '+')
                     accumulator += value;
                 else if (operator == '-')
@@ -52,6 +55,7 @@ void _start(void)
                     }
                     accumulator = (operator == '/') ? accumulator / value : accumulator % value;
                 }
+
                 saw_number = 1;
             }
             else if (character == '+' || character == '-' || character == '*'
@@ -67,6 +71,7 @@ void _start(void)
                 break;
             }
         }
+
         if (valid && saw_number)
         {
             put("= ");
@@ -74,5 +79,6 @@ void _start(void)
             put("\n");
         }
     }
+
     sys_exit(0);
 }

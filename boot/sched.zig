@@ -1,8 +1,4 @@
-// tiny preemptive round robin scheduler. a task is a saved frame + cr3 + kernel
-// stack, task 0 is the kernel event loop. the pit tick swaps the interrupted
-// frame for the next ready tasks and iretqs in, which covers ring 0 and ring 3
-// alike. each task has its own kernel stack so preempting one mid syscall (e.g. a
-// read() parked on sti/hlt) doesnt clobber anothers rsp0
+// tiny preemptive shitty round robin scheduler
 
 const std = @import("std");
 const Frame = @import("regs.zig").Frame;
@@ -25,7 +21,6 @@ const Task = struct {
 var tasks: [MAX_TASKS]Task = @splat(.{});
 var kstacks: [MAX_TASKS][KSTACK_SIZE]u8 align(16) = undefined;
 var current: usize = 0;
-var spawn_count: u64 = 0;
 var blocked_reader: ?usize = null;
 
 var foreground: ?usize = null;
@@ -45,13 +40,13 @@ fn stdinPop() ?u8 {
     return byte;
 }
 
-// task 0 = the kernel/event loop, running in whatever cr3 boot set up
+// task 0 = the kernel/event loop running in whatever cr3 boot set up
 pub fn init(kernel_cr3: u64) void {
     tasks[0] = .{ .cr3 = kernel_cr3, .state = .ready, .kstack_top = 0 };
     current = 0;
 }
 
-pub fn spawn(cr3: u64, entry: u64, ustack: u64) void {
+pub fn spawn(cr3: u64, entry: u64, ustack: u64, arg: u64, arglen: u64) void {
     var i: usize = 1;
     while (i < MAX_TASKS) : (i += 1) {
         if (tasks[i].state != .free) continue;
@@ -61,8 +56,8 @@ pub fn spawn(cr3: u64, entry: u64, ustack: u64) void {
         f.rflags = 0x202; // reserved bit + if=1, so its preemptible
         f.rsp = ustack;
         f.ss = 0x23; // user data (0x20) | rpl 3
-        f.rdi = spawn_count;
-        spawn_count += 1;
+        f.rdi = arg; // _start(arg_ptr, arg_len), the sysv first two args
+        f.rsi = arglen;
         tasks[i] = .{
             .frame = f,
             .cr3 = cr3,
@@ -82,14 +77,24 @@ pub fn procCount() u64 {
     return count;
 }
 
+// task table size + per slot state
+// state is 0 free, 1 ready, 2 dead, 3 blocked
+pub fn taskMax() u64 {
+    return MAX_TASKS;
+}
+pub fn taskState(i: u64) u64 {
+    if (i >= MAX_TASKS) return 0;
+    return @intFromEnum(tasks[i].state);
+}
+
 var proc_exited_flag: bool = false;
 
-// mark the running process dead. it then sti+hlts
+// mark the running process dead then sti+hlts
 pub fn exitCurrent() void {
     if (current != 0) {
         tasks[current].state = .dead;
-        proc_exited_flag = true; // the kernel task reprints the prompt on seeing this
-        if (foreground == current) { // hand keyboard back to the shell
+        proc_exited_flag = true;
+        if (foreground == current) {
             foreground = null;
             stdin_head = 0;
             stdin_tail = 0;
@@ -117,7 +122,7 @@ pub fn blockCurrentOnRead(resume_frame: Frame) void {
 
 pub fn deliverInput(byte: u8) bool {
     if (blocked_reader) |task| {
-        tasks[task].frame.rax = byte; // read()s return value
+        tasks[task].frame.rax = byte;
         tasks[task].state = .ready;
         blocked_reader = null;
         return true;
@@ -133,11 +138,11 @@ pub fn tick(frame: *Frame) void {
     if (bridge.vmBusy()) return;
 
     if (tasks[current].state == .dead) {
-        tasks[current].state = .free; // reclaim, dont bother saving its context
+        tasks[current].state = .free;
     } else if (tasks[current].state == .blocked) {
-        // keep the resume frame saved by blockcurrentonread, dont clobber it you bitch
+        // dont clobber it you bitch
     } else {
-        tasks[current].frame = frame.*; // freeze the current task
+        tasks[current].frame = frame.*;
     }
 
     var next = current;
@@ -150,7 +155,7 @@ pub fn tick(frame: *Frame) void {
             break;
         }
     }
-    
+
     if (tasks[current].state != .ready and next == current) next = 0;
     if (next == current) return;
 

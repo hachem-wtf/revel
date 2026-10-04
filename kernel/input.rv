@@ -1,7 +1,7 @@
 # keyboard scancode table
 # ts is not a good way to write a driver lmao
+
 const KBD       = "  1234567890-=  qwertyuiop[]  asdfghjkl;'` \\zxcvbnm,./    "
-# same layout, shifted. index 42 (left shift) / 54 (right shift) stay blank
 const KBD_SHIFT = "  !@#$%^&*()_+  QWERTYUIOP{}  ASDFGHJKL:\"~ |ZXCVBNM<>?    "
 
 # 8259 pic
@@ -25,11 +25,8 @@ end
 
 # she stroke my keys till i handle
 # no fr this is just a key stroke handler
-global shell = { line = "", shift = :false }
+global shell = { line = "", shift = :false, ext = :false }
 
-# decode one scancode to a character string, or :nil for releases / modifiers /
-# unmapped keys. this is the only scancode decoder now, used by both the shell
-# and the read() syscall
 fn decode_key(code) do
   if code == 0x2a or code == 0x36 do shell.shift = :true  return :nil end # shift down
   if code == 0xaa or code == 0xb6 do shell.shift = :false return :nil end # shift up
@@ -44,12 +41,24 @@ fn decode_key(code) do
 end
 
 global on_key = fn(code) do
+  if code == 0xe0 do shell.ext = :true return :nil end
+  if shell.ext do
+    shell.ext = :false
+    let final = 0
+    if code == 0x48 do final = 65 end      # up
+    else if code == 0x50 do final = 66 end # down
+    else if code == 0x4d do final = 67 end # right
+    else if code == 0x4b do final = 68 end # left
+    if final != 0 do
+      stdin_deliver(27)
+      stdin_deliver(91)
+      stdin_deliver(final)
+    end
+    return :nil
+  end
   const ch = decode_key(code)
   if ch == :nil return :nil
-  # a process blocked in read() gets first dibs, if it takes the byte, the shell
-  # doesnt see it (the process echoes its own input via write())
   if stdin_deliver(ch:ascii()) return :nil
-  # otherwise the shells line editor
   if ch == "\n" do puts("\n") run(shell.line) shell.line = "" return :nil end
   if ch == "\x08" do
     if shell.line:len() > 0 do shell.line = shell.line:sub(0, shell.line:len() - 1) puts("\x08 \x08") end

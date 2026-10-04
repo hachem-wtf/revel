@@ -19,12 +19,22 @@ static void put_hex32(unsigned long value)
 #define PAGE 256
 #define COLS 16
 
-void _start(void)
+void _start(const char* arg, unsigned long arglen)
 {
-    put("hexview, type a filename\nfile: ");
     char name[64];
-    read_line(name, 64);
-    put("\n");
+
+    if (arglen > 0 && arglen < 64)
+    {
+        for (unsigned long i = 0; i < arglen; i++)
+            name[i] = arg[i];
+        name[arglen] = 0;
+    }
+    else
+    {
+        put("hexview, type a filename\nfile: ");
+        read_line(name, 64);
+        put("\n");
+    }
 
     long size = sys_fs_size(name);
     if (size < 0)
@@ -35,6 +45,7 @@ void _start(void)
 
     unsigned long offset = 0;
     char buffer[PAGE];
+
     for (;;)
     {
         long count = sys_fs_read(name, offset, buffer, PAGE);
@@ -61,6 +72,7 @@ void _start(void)
                 else
                     put("   ");
             }
+
             put(" ");
             for (int column = 0; column < COLS && row + column < count; column++)
             {
@@ -73,8 +85,18 @@ void _start(void)
             put("\n");
         }
 
-        put("[n]ext [p]rev [q]uit > ");
+        put("[n]ext [p]rev [q]uit (or up/down arrows) > ");
         char key = (char)sys_read();
+        if (key == 27) // ESC
+        {
+            sys_read();
+            char final = (char)sys_read();
+            if (final == 'A')
+                key = 'p';
+            else if (final == 'B')
+                key = 'n';
+        }
+
         put("\n");
         if (key == 'q')
             break;

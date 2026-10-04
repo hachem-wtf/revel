@@ -39,7 +39,7 @@ pub const panic = std.debug.FullPanic(struct {
 // console and shit
 pub const std_options_debug_io: std.Io = bridge.debug_io;
 
-// check `linker.ld`
+// note: check `linker.ld`
 export var base_revision: limine.BaseRevision linksection(".limine_requests") = limine.BaseRevision.init(3);
 export var requests_start: limine.RequestsStartMarker linksection(".limine_requests_start") = .{};
 export var requests_end: limine.RequestsEndMarker linksection(".limine_requests_end") = .{};
@@ -70,33 +70,42 @@ fn kSerialNext() i64 {
 // read only kernel state exposed to revo so it can present it (mem/uptime/ps and
 // the memory map dump live in revo now)
 var g_memmap: ?*const limine.MemoryMapResponse = null;
+
 fn kMemmapCount() u64 {
     const mm = g_memmap orelse return 0;
     return mm.entry_count;
 }
+
 fn memmapEntry(i: u64) ?*const limine.MemoryMapEntry {
     const mm = g_memmap orelse return null;
     if (i >= mm.entry_count) return null;
     return mm.entries.?[i];
 }
+
 fn kMemmapBase(i: u64) u64 {
     return if (memmapEntry(i)) |e| e.base else 0;
 }
+
 fn kMemmapLen(i: u64) u64 {
     return if (memmapEntry(i)) |e| e.length else 0;
 }
+
 fn kMemmapKind(i: u64) u64 {
     return if (memmapEntry(i)) |e| @intFromEnum(e.type) else 0;
 }
+
 fn kMemFree() u64 {
     return pmm.freeBytes();
 }
+
 fn kMemTotal() u64 {
     return pmm.usableBytes();
 }
+
 fn kUptime() u64 {
     return timer.now();
 }
+
 fn kProcCount() u64 {
     return sched.procCount();
 }
@@ -104,16 +113,18 @@ fn kProcCount() u64 {
 fn kDiskSectors() u64 {
     return ata.sectorCount();
 }
+
 fn kDiskRead(lba: u64, phys: u64) u64 {
     const buf: *[ata.SECTOR]u8 = @ptrFromInt(pmm.physToVirt(phys));
     return if (ata.read(@truncate(lba), buf)) 1 else 0;
 }
+
 fn kDiskWrite(lba: u64, phys: u64) u64 {
     const buf: *const [ata.SECTOR]u8 = @ptrFromInt(pmm.physToVirt(phys));
     return if (ata.write(@truncate(lba), buf)) 1 else 0;
 }
 
-// the embedded programs, copied to frames at boot so revo can load them by name
+// the embedded programs
 const Prog = struct { name: []const u8, phys: u64, size: u64 };
 var g_progs: [elf.programs.len]Prog = undefined;
 
@@ -129,11 +140,25 @@ fn loadPrograms() void {
 fn kProgCount() u64 {
     return g_progs.len;
 }
+
 fn kProgPhys(i: u64) u64 {
     return g_progs[i].phys;
 }
+
 fn kProgName(i: u64) []const u8 {
     return g_progs[i].name;
+}
+
+fn kProgSize(i: u64) u64 {
+    return g_progs[i].size;
+}
+
+fn kTaskMax() u64 {
+    return sched.taskMax();
+}
+
+fn kTaskState(i: u64) u64 {
+    return sched.taskState(i);
 }
 
 // entry(_start)
@@ -186,6 +211,9 @@ export fn _start() callconv(.c) noreturn {
         .prog_count = &kProgCount,
         .prog_phys = &kProgPhys,
         .prog_name = &kProgName,
+        .prog_size = &kProgSize,
+        .task_max = &kTaskMax,
+        .task_state = &kTaskState,
         .disk_sectors = &kDiskSectors,
         .disk_read = &kDiskRead,
         .disk_write = &kDiskWrite,
@@ -252,9 +280,9 @@ fn vmmSelfTest() void {
     serial.write("vmm test: switched back OK\r\n");
 }
 
-// sleep until an interrupt, then drain the keyboard / tick and repeat. this is
-// scheduler task 0. the cli/pop/sti hlt dance closes the lost wakeup race (a key
-// arriving between "queue empty" and hlt would otherwise sit until the next one)
+// 1- sleep until an interrupt
+// 2- then drain the keyboard / tick
+// 3- repeat
 fn eventLoop() noreturn {
     var last_ticks: u64 = 0;
     while (true) {

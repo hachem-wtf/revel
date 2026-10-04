@@ -8,8 +8,7 @@ const regs = @import("regs.zig");
 const bridge = @import("bridge");
 const Frame = regs.Frame;
 
-// scratch for a filename copied out of the caller. one static buffer is fine,
-// syscalls run one at a time (if=0)
+// scratch for a filename copied out of the caller legit one static buffer is fine
 var name_buf: [64]u8 = undefined;
 fn userName(ptr: u64) []const u8 {
     const p: [*]const u8 = @ptrFromInt(ptr);
@@ -18,9 +17,6 @@ fn userName(ptr: u64) []const u8 {
     return name_buf[0..i];
 }
 
-// what the syscall stub leaves on the stack: the gp regs it pushed, then the
-// frame the cpu pushed on int 0x80. rax holds the syscall number in, and the
-// handler writes the return value back into it (restored by the stubs pop)
 pub const SyscallFrame = extern struct {
     r15: u64,
     r14: u64,
@@ -49,8 +45,10 @@ pub fn installSyscall() void {
     idt.setGate(0x80, @intFromPtr(&syscallStub), 3, 1); // ist1: big stack for vm calls
 }
 
-// save gp regs, hand the frame to the zig handler, restore, iretq. the handler
-// returns via syscallframe.rax (restored by the pop below), exit() never returns
+// 1- save gp regs
+// 2- hand the frame to the zig handler
+// 3- restore
+// 4- iretq
 export fn syscallStub() callconv(.naked) void {
     asm volatile (regs.PUSH_GPRS ++
             \\
@@ -119,6 +117,12 @@ export fn syscallHandler(frame: *SyscallFrame) callconv(.c) void {
             const name = userName(frame.rdi);
             const dst: [*]u8 = @ptrFromInt(frame.rdx);
             frame.rax = bridge.fsReadInto(name, frame.rsi, dst[0..len]);
+        },
+        6 => { // fs_write(name_ptr, buf_ptr, len): returns 1 ok / 0 fail
+            const len = @min(frame.rdx, 64 * 1024);
+            const name = userName(frame.rdi);
+            const src: [*]const u8 = @ptrFromInt(frame.rsi);
+            frame.rax = if (bridge.fsStore(name, src[0..len])) 1 else 0;
         },
         else => serial.write("[syscall] unknown\r\n"),
     }

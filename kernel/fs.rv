@@ -1,32 +1,37 @@
-# revelfs, a tiny fat style filesystem, now an object you talk to as fs:method()
-#
 # on disk layout for the 16 mib test disk (32768 sectors):
-#   sector 0        superblock (magic + total sectors)
-#   sectors 1..8    directory, 128 entries of 32 bytes (16 per sector)
-#   sectors 9..136  fat, one 2 byte entry per sector on the whole disk
-#   sectors 137..   file data, one block == one sector
-# a fat entry points at the next block in a files chain, 0 is free, END is the last
+#   sector 0        superblock (magic + total sectors + root dir block)
+#   sectors 1..128  fat, one 2 byte entry per block on the whole disk
+#   sectors 129..   data, used for both file bytes and directory entry blocks
+#
+# a directory is just a file whose data blocks hold 32 byte entries. the
+# superblock points at the root dir, paths are walked from there. a fat entry
+# points at the next block in a chain, 0 is free, END is the last
 
 const SB_LBA = 0
-const DIR_LBA = 1
-const DIR_SECTORS = 8
-const DIR_ENTRIES = 128
-const FAT_LBA = 9
+const FAT_LBA = 1
 const FAT_SECTORS = 128
-const DATA_LBA = 137
+const DATA_LBA = 129
 const BLOCK = 512
+const ENTS = 16          # 32 byte entries per 512 byte block
 const NAME_MAX = 24
-const MAGIC = 0x53465652   # "RVFS" little endian
-const END = 0xffff         # end of chain marker in the fat
+const MAGIC = 0x32465652 # "RVF2" little endian
+const END = 0xffff       # end of chain marker in the fat
+const T_FILE = 1
+const T_DIR = 2
 
-# pure index math, no state, so theyre plain helpers not methods
-fn dir_lba(i) DIR_LBA + (i shr 4)
-fn dir_off(i) (i band 15) * 32
+fn split_path(path) do
+  const raw = path:split("/")
+  let parts = {}
+  for i in 0..raw:len() do
+    if raw[i]:len() > 0 parts:push(raw[i])
+  end
+  return parts
+end
 
-# buf is a scratch sector for the superblock/directory/data, fat is a separate
-# scratch sector so fat lookups dont trample a directory sector were mid edit
+# buf is a scratch sector for superblocks/dirs/data, fat is a separate scratch so
+# fat lookups dont trample a dir block were mid edit.
 global fs = {
-  buf = 0, fat = 0, ready = :false, total = 0,
+  buf = 0, fat = 0, ready = :false, total = 0, root = 0,
 
   fat_get = fn(self, block) do
     disk_read(FAT_LBA + (block shr 8), self.fat)
@@ -40,8 +45,6 @@ global fs = {
     disk_write(lba, self.fat)
   end,
 
-  # first free data block, or 0 if full. scans a whole fat sector per read so this
-  # isnt snails pace
   fat_alloc = fn(self) do
     let block = DATA_LBA
     while block < self.total do
@@ -65,39 +68,145 @@ global fs = {
     end
   end,
 
-  # dir entry is 32 bytes: 
-  # +0 used
+  # entry is 32 bytes:
+  # +0 type (0 free/1 file/2 dir)
   # +1 name len
   # +2 first block
   # +4 size
-  # +8 name
-  name_at = fn(self, base, len) do
+  # +8 name bytes
+  ent_name = fn(self, eoff) do
+    const len = mem_read(self.buf + eoff + 1, 1)
     let out = ""
-    for k in 0..len do out = out ~ string.of_ascii(mem_read(base + 8 + k, 1)) end
+    for k in 0..len do out = out ~ string.of_ascii(mem_read(self.buf + eoff + 8 + k, 1)) end
     out
   end,
 
-  name_matches = fn(self, base, target) do
-    const len = mem_read(base + 1, 1)
-    if len != target:len() return :false
-    return self:name_at(base, len) == target
+  ent_write = fn(self, eoff, type, name, first, size) do
+    mem_write(self.buf + eoff, type, 1)
+    mem_write(self.buf + eoff + 1, name:len(), 1)
+    mem_write(self.buf + eoff + 2, first, 2)
+    mem_write(self.buf + eoff + 4, size, 4)
+    for k in 0..name:len() do mem_write(self.buf + eoff + 8 + k, name[k]:ascii(), 1) end
   end,
 
-  find = fn(self, name) do
-    for i in 0..DIR_ENTRIES do
-      disk_read(dir_lba(i), self.buf)
-      const base = self.buf + dir_off(i)
-      if mem_read(base, 1) == 1 and self:name_matches(base, name) return i
+  dir_lookup = fn(self, dir_first, name) do
+    let block = dir_first
+    while (block != 0 and block != END) do
+      const nxt = self:fat_get(block)
+      disk_read(block, self.buf)
+      for slot in 0..ENTS do
+        const eoff = slot * 32
+        if mem_read(self.buf + eoff, 1) != 0 and self:ent_name(eoff) == name do
+          return { type = mem_read(self.buf + eoff, 1), first = mem_read(self.buf + eoff + 2, 2), size = mem_read(self.buf + eoff + 4, 4) }
+        end
+      end
+      block = nxt
     end
-    return -1
+    return :nil
   end,
 
-  dir_alloc = fn(self) do
-    for i in 0..DIR_ENTRIES do
-      disk_read(dir_lba(i), self.buf)
-      if mem_read(self.buf + dir_off(i), 1) == 0 return i
+  # add or overwrite `name` in the dir
+  # grows a block if every slot is taken
+  dir_set = fn(self, dir_first, name, type, first, size) do
+    let block = dir_first
+    let found_block = 0
+    let found_off = 0
+    let free_block = 0
+    let free_off = -1
+    let last_block = dir_first
+    while (block != 0 and block != END) do
+      last_block = block
+      const nxt = self:fat_get(block)
+      disk_read(block, self.buf)
+      for slot in 0..ENTS do
+        const eoff = slot * 32
+        if mem_read(self.buf + eoff, 1) == 0 do
+          if free_off < 0 do free_block = block free_off = eoff end
+        end
+        else do
+          if self:ent_name(eoff) == name do found_block = block found_off = eoff end
+        end
+      end
+      block = nxt
     end
-    return -1
+
+    let target_block = 0
+    let target_off = 0
+    if found_block != 0 do target_block = found_block target_off = found_off end
+    else if free_off >= 0 do target_block = free_block target_off = free_off end
+    else do
+      const nb = self:fat_alloc()
+      if nb == 0 return :false
+      self:fat_set(nb, END)
+      self:fat_set(last_block, nb)
+      mem_zero(self.buf, BLOCK)
+      disk_write(nb, self.buf)
+      target_block = nb
+      target_off = 0
+    end
+
+    disk_read(target_block, self.buf)
+    self:ent_write(target_off, type, name, first, size)
+    disk_write(target_block, self.buf)
+    return :true
+  end,
+
+  dir_clear = fn(self, dir_first, name) do
+    let block = dir_first
+    while (block != 0 and block != END) do
+      const nxt = self:fat_get(block)
+      disk_read(block, self.buf)
+      for slot in 0..ENTS do
+        const eoff = slot * 32
+        if mem_read(self.buf + eoff, 1) != 0 and self:ent_name(eoff) == name do
+          const info = { type = mem_read(self.buf + eoff, 1), first = mem_read(self.buf + eoff + 2, 2) }
+          mem_write(self.buf + eoff, 0, 1)
+          disk_write(block, self.buf)
+          return info
+        end
+      end
+      block = nxt
+    end
+    return :nil
+  end,
+
+  dir_empty = fn(self, dir_first) do
+    let block = dir_first
+    while (block != 0 and block != END) do
+      const nxt = self:fat_get(block)
+      disk_read(block, self.buf)
+      for slot in 0..ENTS do
+        if mem_read(self.buf + slot * 32, 1) != 0 return :false
+      end
+      block = nxt
+    end
+    return :true
+  end,
+
+  resolve = fn(self, path) do
+    const parts = split_path(path)
+    let cur = self.root
+    let ent = { type = T_DIR, first = self.root, size = 0 }
+    for i in 0..parts:len() do
+      if ent.type != T_DIR return :nil
+      const found = self:dir_lookup(cur, parts[i])
+      if found == :nil return :nil
+      ent = found
+      cur = found.first
+    end
+    return ent
+  end,
+
+  resolve_parent = fn(self, path) do
+    const parts = split_path(path)
+    if parts:len() == 0 return :nil
+    let pdir = self.root
+    for i in 0..(parts:len() - 1) do
+      const found = self:dir_lookup(pdir, parts[i])
+      if found == :nil or found.type != T_DIR return :nil
+      pdir = found.first
+    end
+    return { dir = pdir, name = parts[parts:len() - 1] }
   end,
 
   mount = fn(self) do
@@ -106,10 +215,13 @@ global fs = {
     self.total = disk_sectors()
     if self.total == 0 do self.ready = :false return :nil end
     disk_read(SB_LBA, self.buf)
-    self.ready = if mem_read(self.buf, 4) == MAGIC :true else :false
+    if mem_read(self.buf, 4) == MAGIC do
+      self.root = mem_read(self.buf + 8, 2)
+      self.ready = :true
+    end
+    else do self.ready = :false end
   end,
 
-  # ready is a field so the gate cant be called `ready`, this complains if theres no fs
   ensure = fn(self) do
     if self.ready return :true
     puts("no filesystem, run mkfs first\n")
@@ -119,28 +231,44 @@ global fs = {
   format = fn(self) do
     if disk_sectors() == 0 do puts("mkfs: no disk\n") return :nil end
     mem_zero(self.buf, BLOCK)
+    for s in 0..FAT_SECTORS do disk_write(FAT_LBA + s, self.buf) end
+    const root = self:fat_alloc()
+    self:fat_set(root, END)
+    mem_zero(self.buf, BLOCK)
+    disk_write(root, self.buf)
+    self.root = root
+    mem_zero(self.buf, BLOCK)
     mem_write(self.buf, MAGIC, 4)
     mem_write(self.buf + 4, self.total, 4)
+    mem_write(self.buf + 8, root, 2)
     disk_write(SB_LBA, self.buf)
-    mem_zero(self.buf, BLOCK)
-    for s in 0..DIR_SECTORS do disk_write(DIR_LBA + s, self.buf) end
-    for s in 0..FAT_SECTORS do disk_write(FAT_LBA + s, self.buf) end
     self.ready = :true
     puts("formatted #{self.total} sectors, #{(self.total shr 1)} KiB\n")
   end,
 
-  # silent core of write, returns 1 ok / 0 fail
-  store = fn(self, name, text) do
+  mkdir = fn(self, path) do
+    if self:ensure() == :false return :nil
+    const pp = self:resolve_parent(path)
+    if pp == :nil do puts("mkdir: #{path}: bad path\n") return :nil end
+    if pp.name:len() > NAME_MAX do puts("name too long (max #{NAME_MAX})\n") return :nil end
+    if self:dir_lookup(pp.dir, pp.name) != :nil do puts("mkdir: #{pp.name}: already exists\n") return :nil end
+    const nb = self:fat_alloc()
+    if nb == 0 do puts("disk full\n") return :nil end
+    self:fat_set(nb, END)
+    mem_zero(self.buf, BLOCK)
+    disk_write(nb, self.buf)
+    self:dir_set(pp.dir, pp.name, T_DIR, nb, 0)
+  end,
+
+  store = fn(self, path, text) do
     if self:ensure() == :false return 0
-    if name:len() > NAME_MAX do puts("name too long (max #{NAME_MAX})\n") return 0 end
-    let idx = self:find(name)
-    if idx >= 0 do
-      disk_read(dir_lba(idx), self.buf)
-      self:free_chain(mem_read(self.buf + dir_off(idx) + 2, 2))
-    end
-    else do
-      idx = self:dir_alloc()
-      if idx < 0 do puts("directory full\n") return 0 end
+    const pp = self:resolve_parent(path)
+    if pp == :nil do puts("#{path}: bad path\n") return 0 end
+    if pp.name:len() > NAME_MAX do puts("name too long (max #{NAME_MAX})\n") return 0 end
+    const existing = self:dir_lookup(pp.dir, pp.name)
+    if existing != :nil do
+      if existing.type == T_DIR do puts("#{pp.name}: is a directory\n") return 0 end
+      self:free_chain(existing.first)
     end
 
     const size = text:len()
@@ -150,7 +278,7 @@ global fs = {
     while written < size do
       const block = self:fat_alloc()
       if block == 0 do puts("disk full\n") return 0 end
-      self:fat_set(block, END) # reserve
+      self:fat_set(block, END)
       if first == 0 do first = block end
       else do self:fat_set(prev, block) end
       mem_zero(self.buf, BLOCK)
@@ -163,40 +291,26 @@ global fs = {
       disk_write(block, self.buf)
       prev = block
     end
-
-    disk_read(dir_lba(idx), self.buf)
-    const base = self.buf + dir_off(idx)
-    mem_write(base, 1, 1)
-    mem_write(base + 1, name:len(), 1)
-    mem_write(base + 2, first, 2)
-    mem_write(base + 4, size, 4)
-    for k in 0..name:len() do mem_write(base + 8 + k, name[k]:ascii(), 1) end
-    disk_write(dir_lba(idx), self.buf)
+    self:dir_set(pp.dir, pp.name, T_FILE, first, size)
     return 1
   end,
 
-  # write a file, gee i wonder what a function called `write` does
-  write = fn(self, name, text) do
-    if self:store(name, text) == 1 puts("wrote #{name} (#{text:len()} bytes)\n")
+  write = fn(self, path, text) do
+    if self:store(path, text) == 1 puts("wrote #{path} (#{text:len()} bytes)\n")
   end,
 
-  size = fn(self, name) do
-    const idx = self:find(name)
-    if idx < 0 return -1
-    disk_read(dir_lba(idx), self.buf)
-    return mem_read(self.buf + dir_off(idx) + 4, 4)
+  size = fn(self, path) do
+    const ent = self:resolve(path)
+    if ent == :nil or ent.type == T_DIR return -1
+    return ent.size
   end,
 
-  # read up to len bytes from offset, returned as a string (shorter at eof)
-  read_bytes = fn(self, name, offset, len) do
-    const idx = self:find(name)
-    if idx < 0 return ""
-    disk_read(dir_lba(idx), self.buf)
-    const base = self.buf + dir_off(idx)
-    let block = mem_read(base + 2, 2)
-    const size = mem_read(base + 4, 4)
+  read_bytes = fn(self, path, offset, len) do
+    const ent = self:resolve(path)
+    if ent == :nil or ent.type == T_DIR return ""
+    let block = ent.first
     let stop = offset + len
-    if stop > size do stop = size end
+    if stop > ent.size do stop = ent.size end
     let pos = 0
     let out = ""
     while (block != 0 and block != END and pos < stop) do
@@ -216,17 +330,16 @@ global fs = {
     return out
   end,
 
-  cat = fn(self, name) do
+  cat = fn(self, path) do
     if self:ensure() == :false return :nil
-    const idx = self:find(name)
-    if idx < 0 do puts("cat: #{name}: no such file\n") return :nil end
-    disk_read(dir_lba(idx), self.buf)
-    const base = self.buf + dir_off(idx)
-    let block = mem_read(base + 2, 2)
-    let remaining = mem_read(base + 4, 4)
+    const ent = self:resolve(path)
+    if ent == :nil do puts("cat: #{path}: no such file\n") return :nil end
+    if ent.type == T_DIR do puts("cat: #{path}: is a directory\n") return :nil end
+    let block = ent.first
+    let remaining = ent.size
     let out = ""
     while (block != 0 and block != END and remaining > 0) do
-      const nxt = self:fat_get(block) # grab next before disk_read reuses self.buf
+      const nxt = self:fat_get(block)
       disk_read(block, self.buf)
       const chunk = if remaining > BLOCK BLOCK else remaining
       for k in 0..chunk do out = out ~ string.of_ascii(mem_read(self.buf + k, 1)) end
@@ -237,31 +350,49 @@ global fs = {
     puts("\n")
   end,
 
-  ls = fn(self) do
-    if self:ensure() == :false return :nil
+  ls = fn(self, path) do
+    if self:ensure() == :false return -1
+    const ent = self:resolve(path)
+    if ent == :nil do puts("ls: #{path}: no such file\n") return -1 end
+    if ent.type != T_DIR do puts("  #{path}  #{ent.size} bytes\n") return -1 end
     let count = 0
-    for i in 0..DIR_ENTRIES do
-      disk_read(dir_lba(i), self.buf)
-      const base = self.buf + dir_off(i)
-      if mem_read(base, 1) == 1 do
-        puts("  #{self:name_at(base, mem_read(base + 1, 1))}  #{mem_read(base + 4, 4)} bytes\n")
-        count += 1
+    let block = ent.first
+    while (block != 0 and block != END) do
+      const nxt = self:fat_get(block)
+      disk_read(block, self.buf)
+      for slot in 0..ENTS do
+        const eoff = slot * 32
+        const t = mem_read(self.buf + eoff, 1)
+        if t != 0 do
+          const nm = self:ent_name(eoff)
+          if t == T_DIR do puts("  #{nm}/\n") end
+          else do puts("  #{nm}  #{mem_read(self.buf + eoff + 4, 4)} bytes\n") end
+          count += 1
+        end
       end
+      block = nxt
     end
-    if count == 0 puts("  (empty)\n")
+    return count
   end,
 
-  rm = fn(self, name) do
+  rm = fn(self, path) do
     if self:ensure() == :false return :nil
-    const idx = self:find(name)
-    if idx < 0 do puts("rm: #{name}: no such file\n") return :nil end
-    disk_read(dir_lba(idx), self.buf)
-    const base = self.buf + dir_off(idx)
-    self:free_chain(mem_read(base + 2, 2))
-    disk_read(dir_lba(idx), self.buf)
-    mem_write(self.buf + dir_off(idx), 0, 1)
-    disk_write(dir_lba(idx), self.buf)
-    puts("removed #{name}\n")
+    const pp = self:resolve_parent(path)
+    if pp == :nil do puts("rm: #{path}: no such file\n") return :nil end
+    const ent = self:dir_lookup(pp.dir, pp.name)
+    if ent == :nil do puts("rm: #{path}: no such file\n") return :nil end
+    if ent.type == T_DIR and self:dir_empty(ent.first) == :false do
+      puts("rm: #{pp.name}: directory not empty\n")
+      return :nil
+    end
+    self:free_chain(ent.first)
+    self:dir_clear(pp.dir, pp.name)
+    puts("removed #{pp.name}\n")
+  end,
+
+  is_dir = fn(self, path) do
+    const ent = self:resolve(path)
+    return ent != :nil and ent.type == T_DIR
   end,
 }
 

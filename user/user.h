@@ -1,4 +1,4 @@
-// shared syscall stubs + tiny helpers for revel ring 3 programs
+// shared syscall stubs
 
 static long sys_write(const char* buffer, unsigned long length)
 {
@@ -33,6 +33,16 @@ static long sys_fs_read(const char* name, unsigned long offset, char* buffer, un
     __asm__ volatile("int $0x80"
                      : "=a"(result)
                      : "a"(5L), "D"(name), "S"(offset), "d"(buffer), "c"(length)
+                     : "memory");
+    return result;
+}
+
+static long sys_fs_write(const char* name, const char* buffer, unsigned long length)
+{
+    long result;
+    __asm__ volatile("int $0x80"
+                     : "=a"(result)
+                     : "a"(6L), "D"(name), "S"(buffer), "d"(length)
                      : "memory");
     return result;
 }
@@ -78,20 +88,25 @@ static void put_int(long value)
     int length = 0;
     int negative = value < 0;
     unsigned long magnitude = negative ? (unsigned long)(-value) : (unsigned long)value;
+
     if (magnitude == 0)
         buffer[length++] = '0';
+
     while (magnitude > 0)
     {
         buffer[length++] = (char)('0' + magnitude % 10);
         magnitude /= 10;
     }
+
     if (negative)
         buffer[length++] = '-';
+
     for (int left = 0, right = length - 1; left < right; left++, right--)
     {
         char swap = buffer[left];
         buffer[left] = buffer[right];
         buffer[right] = swap;
     }
+
     sys_write(buffer, length);
 }

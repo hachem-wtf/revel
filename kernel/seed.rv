@@ -1,5 +1,10 @@
 # js dw about this ok?
 fn seed_fs() do
-  fs:write("i have big balls.txt", "dude my balls are actually massive")
-  fs:write("balls.txt", "its lowk insane how big my balls are")
+  fs:mkdir("/usr")
+  fs:mkdir("/etc")
+  fs:mkdir("/home")
+
+  fs:store("/etc/motd", "welcome to revel")
+  fs:store("/home/balls.txt", "its lowk insane how big my balls are")
+  fs:store("/home/i have big balls.txt", "dude my balls are actually massive")
 end
