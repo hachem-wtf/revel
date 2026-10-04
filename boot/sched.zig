@@ -1,22 +1,14 @@
-// tiny preemptive round robin scheduler
-//
-// every schedulable thing is a task holding a saved register frame + its cr3
-// task 0 is the kernel itself (the event loop / shell), always ready. the pit
-// tick (idt.zig -> tick) is where we preempt: save the interrupted tasks frame,
-// pick the next ready task, copy its frame back over the one on the stack, and
-// the irq return path iretqs straight into it. iretq handles ring 0 <-> ring 3
-// the same way (long mode always restores ss:rsp), so one swap covers leaving
-// either the kernel or a process
-//
-// each user task gets its own kernel stack (for its ring3->ring0 syscall/irq
-// entries) and we point tss.rsp0 at it on switch. thats what keeps preempting a
-// task mid syscall safe (e.g. read()s sti+hlt). a shared rsp0 would get
-// clobbered the next time any task trapped into the kernel
+// tiny preemptive round robin scheduler. a task is a saved frame + cr3 + kernel
+// stack, task 0 is the kernel event loop. the pit tick swaps the interrupted
+// frame for the next ready tasks and iretqs in, which covers ring 0 and ring 3
+// alike. each task has its own kernel stack so preempting one mid syscall (e.g. a
+// read() parked on sti/hlt) doesnt clobber anothers rsp0
 
 const std = @import("std");
 const Frame = @import("regs.zig").Frame;
 const vmm = @import("vmm.zig");
 const gdt = @import("gdt.zig");
+const bridge = @import("bridge");
 
 const MAX_TASKS = 8;
 const KSTACK_SIZE = 16 * 1024;
@@ -156,6 +148,9 @@ pub fn deliverInput(byte: u8) bool {
 
 // the preemption point, called from the pit irq with the interrupted frame
 pub fn tick(frame: *Frame) void {
+    // dont preempt task 0 mid vm call, the shared fiber cant be re-entered
+    if (bridge.vmBusy()) return;
+
     if (tasks[current].state == .dead) {
         tasks[current].state = .free; // reclaim, dont bother saving its context
     } else if (tasks[current].state == .blocked) {

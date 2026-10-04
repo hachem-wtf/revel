@@ -125,7 +125,6 @@ pub fn init() void {
     serial.write("\r\n");
 }
 
-// read one 512 byte sector at lba into buf
 pub fn read(lba: u28, buf: *[SECTOR]u8) bool {
     if (!g_present) return false;
     if (!waitNotBusy()) return false;

@@ -1,15 +1,42 @@
 # this is just a simple prompt to test that shit is working
 fn cmd_help() do
-  puts("commands: help, clear, bars, echo <text>, time, mem, uptime, ps, run, zoom in|out\n")
+  puts("commands: help, clear, bars, echo <text>, time, mem, uptime, ps, run <prog>, zoom in|out\n")
   puts("fs: mkfs, ls, cat <name>, write <name> <text>, rm <name>\n")
+  puts("    names with spaces go in \"quotes\"\n")
 end
 
-fn cmd_write(line, words) do
-  if words:len() < 2 do puts("usage: write <name> <text>\n") return :nil end
-  const name = words[1]
-  const start = 6 + name:len() + 1
-  const text = if line:len() > start line:sub(start, line:len() - start) else ""
-  fs_write(name, text)
+fn arg_name(line, start) do
+  let i = start
+  let name = ""
+  if (i < line:len() and line[i]:ascii() == 34) do
+    i += 1
+    while (i < line:len() and line[i]:ascii() != 34) do name = name ~ line[i] i += 1 end
+    if i < line:len() do i += 1 end
+  end
+  else do
+    while (i < line:len() and line[i]:ascii() != 32) do name = name ~ line[i] i += 1 end
+  end
+  if (i < line:len() and line[i]:ascii() == 32) do i += 1 end
+  { name = name, rest = i }
+end
+
+fn cmd_write(line) do
+  const a = arg_name(line, 6)
+  if a.name:len() == 0 do puts("usage: write <name> <text>\n") return :nil end
+  const text = if line:len() > a.rest line:sub(a.rest, line:len() - a.rest) else ""
+  fs_write(a.name, text)
+end
+
+fn cmd_cat(line) do
+  const a = arg_name(line, 4)
+  if a.name:len() == 0 do puts("usage: cat <name>\n") return :nil end
+  fs_cat(a.name)
+end
+
+fn cmd_rm(line) do
+  const a = arg_name(line, 3)
+  if a.name:len() == 0 do puts("usage: rm <name>\n") return :nil end
+  fs_rm(a.name)
 end
 
 fn zoom_by(delta) do
@@ -85,7 +112,14 @@ fn run(line) do
   if line:trim():len() == 0 do puts("% ") return :nil end
   const words = line:split(" ")
   const cmd = words[0]
-  if cmd == "run" do cmd_run() return :nil end
+  # run launches a process, its prompt gets reprinted by on_tick when it exits so
+  # it lands below the programs output. no arg just lists whats available
+  if cmd == "run" do
+    if words:len() <= 1 do list_progs() puts("% ") return :nil end
+    if run_prog(words[1]) == :true return :nil
+    puts("% ")
+    return :nil
+  end
   match cmd
     | "help" => cmd_help()
     | "clear" => cmd_clear()
@@ -97,9 +131,9 @@ fn run(line) do
     | "zoom" => cmd_zoom(words)
     | "mkfs" => fs_format()
     | "ls" => fs_ls()
-    | "cat" => if words:len() > 1 fs_cat(words[1]) else puts("usage: cat <name>\n")
-    | "write" => cmd_write(line, words)
-    | "rm" => if words:len() > 1 fs_rm(words[1]) else puts("usage: rm <name>\n")
+    | "cat" => cmd_cat(line)
+    | "write" => cmd_write(line)
+    | "rm" => cmd_rm(line)
     | "echo" => if line:len() > 5 puts(line:sub(5, line:len() - 5) ~ "\n") else puts("\n")
     | _ => puts("unknown command: " ~ cmd ~ "\n")
   puts("% ")

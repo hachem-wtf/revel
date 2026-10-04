@@ -5,10 +5,7 @@
 #   sectors 1..8    directory, 128 entries of 32 bytes (16 per sector)
 #   sectors 9..136  fat, one 2 byte entry per sector on the whole disk
 #   sectors 137..   file data, one block == one sector
-#
-# a fat entry is the next block in a files chain, 0 means free, END means last
-# block of a chain. a file just stores its first block + byte size in its dir
-# entry and we walk the chain from there
+# a fat entry points at the next block in a files chain, 0 is free, END is the last
 
 const SB_LBA = 0
 const DIR_LBA = 1
@@ -66,12 +63,7 @@ end
 fn dir_lba(i) DIR_LBA + (i shr 4)
 fn dir_off(i) (i band 15) * 32
 
-# entry byte layout: base is fs.buf + dir_off(i) after loading the sector
-#   +0  used (0/1)
-#   +1  name length
-#   +2  first block (2)
-#   +4  size (4)
-#   +8  name bytes (up to NAME_MAX)
+# dir entry, 32 bytes: +0 used, +1 name len, +2 first block, +4 size, +8 name bytes
 fn name_at(base, len) do
   let out = ""
   for k in 0..len do out = out ~ string.of_ascii(mem_read(base + 8 + k, 1)) end
@@ -108,13 +100,19 @@ fn fs_init() do
   fs.buf = frame_alloc()
   fs.fat = frame_alloc()
   fs.total = disk_sectors()
-  if disk_present() == 0 do fs.ready = :false return :nil end
+  if fs.total == 0 do fs.ready = :false return :nil end
   disk_read(SB_LBA, fs.buf)
   fs.ready = if mem_read(fs.buf, 4) == MAGIC :true else :false
 end
 
+fn fs_ready() do
+  if fs.ready return :true
+  puts("no filesystem, run mkfs first\n")
+  :false
+end
+
 fn fs_format() do
-  if disk_present() == 0 do puts("mkfs: no disk\n") return :nil end
+  if disk_sectors() == 0 do puts("mkfs: no disk\n") return :nil end
   mem_zero(fs.buf, BLOCK)
   mem_write(fs.buf, MAGIC, 4)
   mem_write(fs.buf + 4, fs.total, 4)
@@ -126,10 +124,10 @@ fn fs_format() do
   puts("formatted " ~ fs.total ~ " sectors, " ~ (fs.total shr 1) ~ " KiB\n")
 end
 
-# write a file, gee i wonder what a function called `fs_write` does
-fn fs_write(name, text) do
-  if fs.ready == :false do puts("no filesystem, run mkfs first\n") return :nil end
-  if name:len() > NAME_MAX do puts("name too long (max " ~ NAME_MAX ~ ")\n") return :nil end
+# silent core of fs_write, global so the bridge can reach it via getGlobal
+global fs_store = fn(name, text) do
+  if fs_ready() == :false return 0
+  if name:len() > NAME_MAX do puts("name too long (max " ~ NAME_MAX ~ ")\n") return 0 end
   let idx = fs_find(name)
   if idx >= 0 do
     disk_read(dir_lba(idx), fs.buf)
@@ -137,7 +135,7 @@ fn fs_write(name, text) do
   end
   else do
     idx = dir_alloc()
-    if idx < 0 do puts("directory full\n") return :nil end
+    if idx < 0 do puts("directory full\n") return 0 end
   end
 
   const size = text:len()
@@ -146,7 +144,7 @@ fn fs_write(name, text) do
   let written = 0
   while written < size do
     const block = fat_alloc()
-    if block == 0 do puts("disk full\n") return :nil end
+    if block == 0 do puts("disk full\n") return 0 end
     fat_set(block, END) # reserve
     if first == 0 do first = block end
     else do fat_set(prev, block) end
@@ -169,11 +167,52 @@ fn fs_write(name, text) do
   mem_write(base + 4, size, 4)
   for k in 0..name:len() do mem_write(base + 8 + k, name[k]:ascii(), 1) end
   disk_write(dir_lba(idx), fs.buf)
-  puts("wrote " ~ name ~ " (" ~ size ~ " bytes)\n")
+  return 1
+end
+
+# write a file, gee i wonder what a function called `fs_write` does
+fn fs_write(name, text) do
+  if fs_store(name, text) == 1 puts("wrote " ~ name ~ " (" ~ text:len() ~ " bytes)\n")
+end
+
+global fs_size = fn(name) do
+  const idx = fs_find(name)
+  if idx < 0 return -1
+  disk_read(dir_lba(idx), fs.buf)
+  return mem_read(fs.buf + dir_off(idx) + 4, 4)
+end
+
+# read up to len bytes from offset, returned as a string (shorter at eof)
+global fs_read_bytes = fn(name, offset, len) do
+  const idx = fs_find(name)
+  if idx < 0 return ""
+  disk_read(dir_lba(idx), fs.buf)
+  const base = fs.buf + dir_off(idx)
+  let block = mem_read(base + 2, 2)
+  const size = mem_read(base + 4, 4)
+  let stop = offset + len
+  if stop > size do stop = size end
+  let pos = 0
+  let out = ""
+  while (block != 0 and block != END and pos < stop) do
+    const nxt = fat_get(block)
+    if (pos + BLOCK > offset and pos < stop) do
+      disk_read(block, fs.buf)
+      let k = 0
+      while (k < BLOCK) do
+        const abs = pos + k
+        if (abs >= offset and abs < stop) do out = out ~ string.of_ascii(mem_read(fs.buf + k, 1)) end
+        k += 1
+      end
+    end
+    pos += BLOCK
+    block = nxt
+  end
+  return out
 end
 
 fn fs_cat(name) do
-  if fs.ready == :false do puts("no filesystem, run mkfs first\n") return :nil end
+  if fs_ready() == :false return :nil
   const idx = fs_find(name)
   if idx < 0 do puts("cat: " ~ name ~ ": no such file\n") return :nil end
   disk_read(dir_lba(idx), fs.buf)
@@ -194,7 +233,7 @@ fn fs_cat(name) do
 end
 
 fn fs_ls() do
-  if fs.ready == :false do puts("no filesystem, run mkfs first\n") return :nil end
+  if fs_ready() == :false return :nil
   let count = 0
   for i in 0..DIR_ENTRIES do
     disk_read(dir_lba(i), fs.buf)
@@ -208,7 +247,7 @@ fn fs_ls() do
 end
 
 fn fs_rm(name) do
-  if fs.ready == :false do puts("no filesystem, run mkfs first\n") return :nil end
+  if fs_ready() == :false return :nil
   const idx = fs_find(name)
   if idx < 0 do puts("rm: " ~ name ~ ": no such file\n") return :nil end
   disk_read(dir_lba(idx), fs.buf)

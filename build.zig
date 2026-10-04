@@ -68,6 +68,7 @@ pub fn build(b: *std.Build) void {
         .{ "k_console", "kernel/console.rv" },
         .{ "k_vmm", "kernel/vmm.rv" },
         .{ "k_fs", "kernel/fs.rv" },
+        .{ "k_seed", "kernel/seed.rv" },
         .{ "k_proc", "kernel/proc.rv" },
         .{ "k_shell", "kernel/shell.rv" },
         .{ "k_input", "kernel/input.rv" },
@@ -78,18 +79,22 @@ pub fn build(b: *std.Build) void {
 
     kernel.root_module.addImport("bridge", bridge_mod);
 
-    const cc = b.addSystemCommand(&.{
-        "zig",                  "cc",
-        "-target",              "x86_64-freestanding",
-        "-ffreestanding",       "-nostdlib",
-        "-static",              "-no-pie",
-        "-fno-stack-protector", "-fno-sanitize=all",
-        "-Wl,-T,user/link.ld",  "-Wl,--build-id=none",
-        "-o",
-    });
-    const program_elf = cc.addOutputFileArg("user_program.elf");
-    cc.addFileArg(b.path("user/program.c"));
-    kernel.root_module.addAnonymousImport("user_program", .{ .root_source_file = program_elf });
+    // each ring 3 program compiles to its own freestanding elf, embedded under
+    // user_<name>. boot copies them to frames and the shells `run <name>` loads one
+    inline for (.{ "hexview", "calc", "primes" }) |prog| {
+        const cc = b.addSystemCommand(&.{
+            "zig",                  "cc",
+            "-target",              "x86_64-freestanding",
+            "-ffreestanding",       "-nostdlib",
+            "-static",              "-no-pie",
+            "-fno-stack-protector", "-fno-sanitize=all",
+            "-Wl,-T,user/link.ld",  "-Wl,--build-id=none",
+            "-o",
+        });
+        const prog_elf = cc.addOutputFileArg(prog ++ ".elf");
+        cc.addFileArg(b.path("user/" ++ prog ++ ".c"));
+        kernel.root_module.addAnonymousImport("user_" ++ prog, .{ .root_source_file = prog_elf });
+    }
 
     b.installArtifact(kernel);
 }

@@ -44,16 +44,12 @@ iso: kernel limine/limine
     iso_root -o $(ISO)
 	./limine/limine bios-install $(ISO)
 
-# persistent scratch disk for the filesystem. survives across boots and across
-# `make clean`, blow it away by hand or with `make wipedisk` if you want a fresh one
 $(DISK):
 	qemu-img create -f raw $(DISK) $(DISK_MB)M
 
 wipedisk:
 	rm -f $(DISK)
 
-# -M pc (i440fx) not q35, we want the piix3 legacy ide controller at the classic
-# 0x1F0 ports so the ata pio driver can find the disk. q35 only gives you ahci
 run: iso $(DISK)
 	$(QEMU) -M pc -m 256M -cdrom $(ISO) -boot d \
    -drive file=$(DISK),format=raw,if=ide \

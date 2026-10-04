@@ -9,9 +9,14 @@ cmd_clear()
 dump_memmap()
 
 fs_init()
-if disk_present() == 0 puts("no disk attached\n")
+if disk_sectors() == 0 puts("no disk attached\n")
 else if fs.ready puts("mounted revelfs on disk\n")
-else puts("disk has no filesystem, run `mkfs`\n")
+else do
+  # blank disk, first boot after a clone. format it and drop the default files on
+  puts("blank disk, formatting + seeding default files\n")
+  fs_format()
+  seed_fs()
+end
 
 puts("revel shell, live in revo. type `help`\n% ")
 flush_console()

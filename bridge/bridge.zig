@@ -282,6 +282,7 @@ pub const KernelOps = struct {
     deliver_input: *const fn (u8) bool, // hand a byte to a read()-blocked task, false if none
     proc_exited: *const fn () bool, // true once after a process exits (consumed)
     serial_next: *const fn () i64, // next mirrored serial byte, or -1 if empty
+
     // read only state for revo to present (mem/uptime/ps/dump_memmap):
     memmap_count: *const fn () u64,
     memmap_base: *const fn (u64) u64,
@@ -289,24 +290,29 @@ pub const KernelOps = struct {
     memmap_kind: *const fn (u64) u64,
     mem_free: *const fn () u64,
     mem_total: *const fn () u64,
+
     uptime: *const fn () u64,
     proc_count: *const fn () u64,
-    elf_phys: u64,
-    elf_size: u64,
-    // block device, the filesystem in revo drives these (512 byte sectors)
-    disk_present: *const fn () u64,
+    prog_count: *const fn () u64,
+    prog_phys: *const fn (u64) u64,
+    prog_name: *const fn (u64) []const u8,
+
     disk_sectors: *const fn () u64,
     disk_read: *const fn (u64, u64) u64, // lba, phys buf -> 1 ok / 0 fail
     disk_write: *const fn (u64, u64) u64, // lba, phys buf -> 1 ok / 0 fail
 };
 var g_kops: ?KernelOps = null;
 
+// every host fn needs the kernel ops, boot wires them before the vm ever runs
+fn kops() KernelOps {
+    return g_kops.?;
+}
+
 // mem_read(phys, size) -> value: read 1/2/4/8 bytes of physical memory
 fn hostMemRead(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const phys = argInt(u64, args, 0) orelse return HostResult.other("mem_read: bad addr");
     const size = argInt(u64, args, 1) orelse return HostResult.other("mem_read: bad size");
-    const virt = ops.phys_to_virt(phys);
+    const virt = kops().phys_to_virt(phys);
     const val: u64 = switch (size) {
         1 => @as(*const u8, @ptrFromInt(virt)).*,
         2 => @as(*align(1) const u16, @ptrFromInt(virt)).*,
@@ -319,9 +325,8 @@ fn hostMemRead(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
 
 // mem_copy(dst_phys, src_phys, len): raw copy between physical regions
 fn hostMemCopy(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    const dst = ops.phys_to_virt(argInt(u64, args, 0) orelse return HostResult.other("mem_copy: bad dst"));
-    const src = ops.phys_to_virt(argInt(u64, args, 1) orelse return HostResult.other("mem_copy: bad src"));
+    const dst = kops().phys_to_virt(argInt(u64, args, 0) orelse return HostResult.other("mem_copy: bad dst"));
+    const src = kops().phys_to_virt(argInt(u64, args, 1) orelse return HostResult.other("mem_copy: bad src"));
     const len = argInt(usize, args, 2) orelse return HostResult.other("mem_copy: bad len");
     @memcpy(@as([*]u8, @ptrFromInt(dst))[0..len], @as([*]const u8, @ptrFromInt(src))[0..len]);
     return HostResult.data(Data.new.nil());
@@ -329,8 +334,7 @@ fn hostMemCopy(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
 
 // mem_zero(phys, len)
 fn hostMemZero(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    const dst = ops.phys_to_virt(argInt(u64, args, 0) orelse return HostResult.other("mem_zero: bad addr"));
+    const dst = kops().phys_to_virt(argInt(u64, args, 0) orelse return HostResult.other("mem_zero: bad addr"));
     const len = argInt(usize, args, 1) orelse return HostResult.other("mem_zero: bad len");
     @memset(@as([*]u8, @ptrFromInt(dst))[0..len], 0);
     return HostResult.data(Data.new.nil());
@@ -338,11 +342,10 @@ fn hostMemZero(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
 
 // mem_write(phys, val, size): write 1/2/4/8 bytes of physical memory
 fn hostMemWrite(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const phys = argInt(u64, args, 0) orelse return HostResult.other("mem_write: bad addr");
     const val = argInt(u64, args, 1) orelse return HostResult.other("mem_write: bad val");
     const size = argInt(u64, args, 2) orelse return HostResult.other("mem_write: bad size");
-    const virt = ops.phys_to_virt(phys);
+    const virt = kops().phys_to_virt(phys);
     switch (size) {
         1 => @as(*u8, @ptrFromInt(virt)).* = @truncate(val),
         2 => @as(*align(1) u16, @ptrFromInt(virt)).* = @truncate(val),
@@ -364,114 +367,96 @@ fn hostInvlpg(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
 }
 
 fn hostFrameAlloc(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.alloc_frame()));
+    return HostResult.data(Data.new.num(kops().alloc_frame()));
 }
 
 fn hostAsCreate(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.create_addrspace()));
+    return HostResult.data(Data.new.num(kops().create_addrspace()));
 }
 
 fn hostProcRun(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const as = argInt(u64, args, 0) orelse return HostResult.other("proc_run: bad as");
     const entry = argInt(u64, args, 1) orelse return HostResult.other("proc_run: bad entry");
     const ustack = argInt(u64, args, 2) orelse return HostResult.other("proc_run: bad ustack");
-    ops.spawn(as, entry, ustack); // queues the task, the scheduler runs it
+    kops().spawn(as, entry, ustack); // queues the task, the scheduler runs it
     return HostResult.data(Data.new.nil());
 }
 
 // stdin_deliver(charcode) -> 1 if a read()-blocked process took it, else 0. the
 // revo key handler calls this before feeding its own line editor
 fn hostStdinDeliver(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const ch = argInt(u8, args, 0) orelse return HostResult.other("stdin_deliver: bad char");
-    return HostResult.data(Data.new.num(if (ops.deliver_input(ch)) @as(f64, 1) else 0));
+    return HostResult.data(Data.new.num(if (kops().deliver_input(ch)) @as(f64, 1) else 0));
 }
 
 // proc_exited() -> 1 once after a process exits, so the shell can reprint its
 // prompt below the programs output
 fn hostProcExited(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(if (ops.proc_exited()) @as(f64, 1) else 0));
+    return HostResult.data(Data.new.num(if (kops().proc_exited()) @as(f64, 1) else 0));
 }
 
 // serial_next() -> byte or -1
 fn hostSerialNext(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.serial_next()));
+    return HostResult.data(Data.new.num(kops().serial_next()));
 }
 
-fn hostElfPhys(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.elf_phys));
+fn hostProgCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return HostResult.data(Data.new.num(kops().prog_count()));
 }
 
-fn hostElfSize(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.elf_size));
+fn hostProgPhys(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const i = argInt(u64, args, 0) orelse return HostResult.other("prog_phys: bad index");
+    return HostResult.data(Data.new.num(kops().prog_phys(i)));
+}
+
+fn hostProgName(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const i = argInt(u64, args, 0) orelse return HostResult.other("prog_name: bad index");
+    return HostResult.data(try vm.ownValueString(kops().prog_name(i)));
 }
 
 // read only state getters revo uses for mem/uptime/ps and dump_memmap
 fn hostMemmapCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.memmap_count()));
+    return HostResult.data(Data.new.num(kops().memmap_count()));
 }
 fn hostMemmapBase(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const index = argInt(u64, args, 0) orelse return HostResult.other("memmap_base: bad index");
-    return HostResult.data(Data.new.num(ops.memmap_base(index)));
+    return HostResult.data(Data.new.num(kops().memmap_base(index)));
 }
 fn hostMemmapLen(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const index = argInt(u64, args, 0) orelse return HostResult.other("memmap_len: bad index");
-    return HostResult.data(Data.new.num(ops.memmap_len(index)));
+    return HostResult.data(Data.new.num(kops().memmap_len(index)));
 }
 fn hostMemmapKind(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const index = argInt(u64, args, 0) orelse return HostResult.other("memmap_kind: bad index");
-    return HostResult.data(Data.new.num(ops.memmap_kind(index)));
+    return HostResult.data(Data.new.num(kops().memmap_kind(index)));
 }
 fn hostMemFree(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.mem_free()));
+    return HostResult.data(Data.new.num(kops().mem_free()));
 }
 fn hostMemTotal(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.mem_total()));
+    return HostResult.data(Data.new.num(kops().mem_total()));
 }
 fn hostUptime(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.uptime()));
+    return HostResult.data(Data.new.num(kops().uptime()));
 }
 fn hostProcCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.proc_count()));
-}
-
-fn hostDiskPresent(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.disk_present()));
+    return HostResult.data(Data.new.num(kops().proc_count()));
 }
 
 fn hostDiskSectors(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
-    return HostResult.data(Data.new.num(ops.disk_sectors()));
+    return HostResult.data(Data.new.num(kops().disk_sectors()));
 }
 
 fn hostDiskRead(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const lba = argInt(u64, args, 0) orelse return HostResult.other("disk_read: bad lba");
     const phys = argInt(u64, args, 1) orelse return HostResult.other("disk_read: bad phys");
-    return HostResult.data(Data.new.num(ops.disk_read(lba, phys)));
+    return HostResult.data(Data.new.num(kops().disk_read(lba, phys)));
 }
 
 fn hostDiskWrite(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const ops = g_kops orelse return HostResult.other("no kernel ops");
     const lba = argInt(u64, args, 0) orelse return HostResult.other("disk_write: bad lba");
     const phys = argInt(u64, args, 1) orelse return HostResult.other("disk_write: bad phys");
-    return HostResult.data(Data.new.num(ops.disk_write(lba, phys)));
+    return HostResult.data(Data.new.num(kops().disk_write(lba, phys)));
 }
 
 fn registerPrimitives(vm: *revo.VM) !void {
@@ -496,8 +481,9 @@ fn registerPrimitives(vm: *revo.VM) !void {
     try vm.registerGlobal("stdin_deliver", try vm.installHost("stdin_deliver", define(&[_]T{.number}, hostStdinDeliver)));
     try vm.registerGlobal("proc_exited", try vm.installHost("proc_exited", define(&[_]T{}, hostProcExited)));
     try vm.registerGlobal("serial_next", try vm.installHost("serial_next", define(&[_]T{}, hostSerialNext)));
-    try vm.registerGlobal("elf_phys", try vm.installHost("elf_phys", define(&[_]T{}, hostElfPhys)));
-    try vm.registerGlobal("elf_size", try vm.installHost("elf_size", define(&[_]T{}, hostElfSize)));
+    try vm.registerGlobal("prog_count", try vm.installHost("prog_count", define(&[_]T{}, hostProgCount)));
+    try vm.registerGlobal("prog_phys", try vm.installHost("prog_phys", define(&[_]T{.number}, hostProgPhys)));
+    try vm.registerGlobal("prog_name", try vm.installHost("prog_name", define(&[_]T{.number}, hostProgName)));
     try vm.registerGlobal("memmap_count", try vm.installHost("memmap_count", define(&[_]T{}, hostMemmapCount)));
     try vm.registerGlobal("memmap_base", try vm.installHost("memmap_base", define(&[_]T{.number}, hostMemmapBase)));
     try vm.registerGlobal("memmap_len", try vm.installHost("memmap_len", define(&[_]T{.number}, hostMemmapLen)));
@@ -507,7 +493,6 @@ fn registerPrimitives(vm: *revo.VM) !void {
     try vm.registerGlobal("uptime", try vm.installHost("uptime", define(&[_]T{}, hostUptime)));
     try vm.registerGlobal("proc_count", try vm.installHost("proc_count", define(&[_]T{}, hostProcCount)));
 
-    try vm.registerGlobal("disk_present", try vm.installHost("disk_present", define(&[_]T{}, hostDiskPresent)));
     try vm.registerGlobal("disk_sectors", try vm.installHost("disk_sectors", define(&[_]T{}, hostDiskSectors)));
     try vm.registerGlobal("disk_read", try vm.installHost("disk_read", define(&[_]T{ .number, .number }, hostDiskRead)));
     try vm.registerGlobal("disk_write", try vm.installHost("disk_write", define(&[_]T{ .number, .number }, hostDiskWrite)));
@@ -520,6 +505,7 @@ const init_program = @embedFile("k_font") ++ "\n" ++
     @embedFile("k_console") ++ "\n" ++
     @embedFile("k_vmm") ++ "\n" ++
     @embedFile("k_fs") ++ "\n" ++
+    @embedFile("k_seed") ++ "\n" ++
     @embedFile("k_proc") ++ "\n" ++
     @embedFile("k_shell") ++ "\n" ++
     @embedFile("k_input") ++ "\n" ++
@@ -599,6 +585,8 @@ pub fn onKey(scancode: u8) void {
     const vm = g_vm orelse return;
     const cb = vm.getGlobal("on_key") orelse return;
     if (cb.asFunction() == null) return;
+    g_vm_running = true;
+    defer g_vm_running = false;
     _ = vm.callFunctionParts(cb, null, &[_]revo.Value{revo.Value.new.num(scancode)}, null) catch {
         sink("bridge: on_key threw\r\n");
     };
@@ -618,5 +606,44 @@ pub fn onTick(ticks: u64) void {
     const vm = g_vm orelse return;
     const cb = vm.getGlobal("on_tick") orelse return;
     if (cb.asFunction() == null) return;
+    g_vm_running = true;
+    defer g_vm_running = false;
     _ = vm.callFunctionParts(cb, null, &[_]revo.Value{revo.Value.new.num(ticks)}, null) catch {};
+}
+
+// true while revo bytecode runs, sched.tick wont preempt task 0 mid call so the
+// shared fiber cant be re-entered
+var g_vm_running: bool = false;
+pub fn vmBusy() bool {
+    return g_vm_running;
+}
+
+// fs access for ring 3 programs, called from the int 0x80 handler (interrupts
+// off) straight into the revo fs
+pub fn fsSize(name: []const u8) i64 {
+    const vm = g_vm orelse return -1;
+    const func = vm.getGlobal("fs_size") orelse return -1;
+    const name_val = vm.ownValueString(name) catch return -1;
+    g_vm_running = true;
+    defer g_vm_running = false;
+    const r = vm.callFunctionParts(func, null, &[_]revo.Value{name_val}, null) catch return -1;
+    return @intFromFloat(r.asNumOpt() orelse return -1);
+}
+
+pub fn fsReadInto(name: []const u8, offset: u64, dst: []u8) usize {
+    const vm = g_vm orelse return 0;
+    const func = vm.getGlobal("fs_read_bytes") orelse return 0;
+    const name_val = vm.ownValueString(name) catch return 0;
+    g_vm_running = true;
+    defer g_vm_running = false;
+    const r = vm.callFunctionParts(func, null, &[_]revo.Value{
+        name_val,
+        revo.Value.new.num(offset),
+        revo.Value.new.num(dst.len),
+    }, null) catch return 0;
+    const sid = r.asString() orelse return 0;
+    const bytes = vm.stringValue(sid);
+    const n = @min(bytes.len, dst.len);
+    @memcpy(dst[0..n], bytes[0..n]);
+    return n;
 }

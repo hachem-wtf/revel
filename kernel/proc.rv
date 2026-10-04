@@ -1,12 +1,11 @@
-# parse the embedded elf (physical address from elf_phys()) and run it in ring 3
+# load an embedded elf into a fresh address space and run it in ring 3
 
 const PT_LOAD = 1
 const PAGE_FLAGS = 6 # write | user
 
-fn cmd_run() do
-  const base = elf_phys()
+fn load_elf(base) do
   if mem_read(base, 4) != 0x464c457f do
-    puts("run: not an ELF\n")
+    puts("not an ELF\n")
     return :nil
   end
   const entry = mem_read(base + 24, 8)
@@ -37,4 +36,19 @@ fn cmd_run() do
   const stack_top = 0x7fff0000
   as_map(space, stack_top - 4096, frame_alloc(), PAGE_FLAGS)
   proc_run(space, entry, stack_top)
+end
+
+# launch a program by name, :true if one matched
+fn run_prog(name) do
+  for i in 0..prog_count() do
+    if prog_name(i) == name do load_elf(prog_phys(i)) return :true end
+  end
+  puts("no such program: " ~ name ~ "\n")
+  return :false
+end
+
+fn list_progs() do
+  puts("programs:")
+  for i in 0..prog_count() do puts(" " ~ prog_name(i)) end
+  puts("\n")
 end

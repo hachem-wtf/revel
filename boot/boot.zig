@@ -101,10 +101,6 @@ fn kProcCount() u64 {
     return sched.procCount();
 }
 
-// block device, revo builds the filesystem on top of these
-fn kDiskPresent() u64 {
-    return if (ata.present()) 1 else 0;
-}
 fn kDiskSectors() u64 {
     return ata.sectorCount();
 }
@@ -115,6 +111,29 @@ fn kDiskRead(lba: u64, phys: u64) u64 {
 fn kDiskWrite(lba: u64, phys: u64) u64 {
     const buf: *const [ata.SECTOR]u8 = @ptrFromInt(pmm.physToVirt(phys));
     return if (ata.write(@truncate(lba), buf)) 1 else 0;
+}
+
+// the embedded programs, copied to frames at boot so revo can load them by name
+const Prog = struct { name: []const u8, phys: u64, size: u64 };
+var g_progs: [elf.programs.len]Prog = undefined;
+
+fn loadPrograms() void {
+    for (elf.programs, 0..) |p, i| {
+        const pages = (p.bytes.len + 4095) / 4096;
+        const phys = pmm.allocContig(pages) orelse @panic("no room for an embedded program");
+        @memcpy(@as([*]u8, @ptrFromInt(pmm.physToVirt(phys)))[0..p.bytes.len], p.bytes);
+        g_progs[i] = .{ .name = p.name, .phys = phys, .size = p.bytes.len };
+    }
+}
+
+fn kProgCount() u64 {
+    return g_progs.len;
+}
+fn kProgPhys(i: u64) u64 {
+    return g_progs[i].phys;
+}
+fn kProgName(i: u64) []const u8 {
+    return g_progs[i].name;
 }
 
 // entry(_start)
@@ -143,9 +162,7 @@ export fn _start() callconv(.c) noreturn {
     vmmSelfTest();
     ata.init();
 
-    const elf_pages = (elf.hello_elf.len + 4095) / 4096;
-    const elf_phys = pmm.allocContig(elf_pages) orelse @panic("no room for the embedded ELF");
-    @memcpy(@as([*]u8, @ptrFromInt(pmm.physToVirt(elf_phys)))[0..elf.hello_elf.len], elf.hello_elf);
+    loadPrograms();
     // the event loop below is scheduler task 0 (the kernel), running in the
     // current cr3. user tasks spawned by `run` get time fucked against it
     sched.init(vmm.activePml4());
@@ -166,9 +183,9 @@ export fn _start() callconv(.c) noreturn {
         .mem_total = &kMemTotal,
         .uptime = &kUptime,
         .proc_count = &kProcCount,
-        .elf_phys = elf_phys,
-        .elf_size = elf.hello_elf.len,
-        .disk_present = &kDiskPresent,
+        .prog_count = &kProgCount,
+        .prog_phys = &kProgPhys,
+        .prog_name = &kProgName,
         .disk_sectors = &kDiskSectors,
         .disk_read = &kDiskRead,
         .disk_write = &kDiskWrite,
