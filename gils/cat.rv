@@ -1,0 +1,10 @@
+# meow
+
+const context = env.ctx
+const parsed = arg_name(context.rest, 0)
+if parsed.name:len() == 0 do puts("usage: cat <path>\n") end
+else do
+  const path = abspath(parsed.name)
+  if vfs_owns(path) do vfs_cat(path) end
+  else do fs:cat(path) end
+end

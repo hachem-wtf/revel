@@ -15,16 +15,25 @@ pub const KernelOps = hosts.KernelOps;
 // the vm outlives boot() now, so we juts make this hoe static
 var g_vm: ?*revo.VM = null;
 
-const init_program = @embedFile("k_font") ++ "\n" ++
-    @embedFile("k_console") ++ "\n" ++
-    @embedFile("k_vmm") ++ "\n" ++
-    @embedFile("k_fs") ++ "\n" ++
-    @embedFile("k_vfs") ++ "\n" ++
-    @embedFile("k_seed") ++ "\n" ++
-    @embedFile("k_proc") ++ "\n" ++
-    @embedFile("k_shell") ++ "\n" ++
-    @embedFile("k_input") ++ "\n" ++
-    @embedFile("k_main");
+// NOTE: ORDER MATTERS
+const init_program = blk: {
+    var s: []const u8 = @embedFile("k_font") ++ "\n" ++
+        @embedFile("k_console") ++ "\n" ++
+        @embedFile("k_vmm") ++ "\n" ++
+        @embedFile("k_fs") ++ "\n" ++
+        @embedFile("k_vfs") ++ "\n" ++
+        @embedFile("k_seed") ++ "\n";
+
+    // gils shit
+    const gils_embedded = .{ "gils", "ed" };
+    for (gils_embedded) |g| s = s ++ @embedFile("k_gils_" ++ g) ++ "\n";
+
+    s = s ++ @embedFile("k_proc") ++ "\n" ++
+        @embedFile("k_shell") ++ "\n" ++
+        @embedFile("k_input") ++ "\n" ++
+        @embedFile("k_main");
+    break :blk s;
+};
 
 pub fn boot(alloc: std.mem.Allocator, out: Sink, fb: ?Fb, ops: ?KernelOps) void {
     serial.setSink(out);
@@ -50,7 +59,7 @@ pub fn boot(alloc: std.mem.Allocator, out: Sink, fb: ?Fb, ops: ?KernelOps) void 
     };
     out("bridge: revo VM up\r\n");
 
-    hosts.registerPrimitives(vm) catch {
+    hosts.passShitToRevo(vm) catch {
         out("bridge: registering primitives failed\r\n");
         return;
     };
@@ -64,7 +73,7 @@ pub fn boot(alloc: std.mem.Allocator, out: Sink, fb: ?Fb, ops: ?KernelOps) void 
         .err => |failure| {
             out("bridge: compile error: ");
             var sw = serial.SinkWriter.init();
-            revo.lang.renderError(alloc, &sw.interface, .{ .name = "kernel", .text = init_program }, failure) catch {};
+            revo.lang.renderError(alloc, &sw.interface, .{ .name = "kernel", .text = init_program }, failure, .{}) catch {};
             out("\r\n");
             return;
         },
@@ -86,7 +95,7 @@ pub fn boot(alloc: std.mem.Allocator, out: Sink, fb: ?Fb, ops: ?KernelOps) void 
         .err => |failure| {
             out("\r\nbridge: runtime error: ");
             var sw = serial.SinkWriter.init();
-            failure.render(alloc, &sw.interface, init_program) catch {};
+            failure.render(alloc, &sw.interface, init_program, false) catch {};
             out("\r\n");
         },
     }

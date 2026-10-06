@@ -60,6 +60,9 @@ fn kPhysToVirt(p: u64) u64 {
 fn kAllocFrame() u64 {
     return pmm.alloc() orelse 0;
 }
+fn kAllocContig(n: u64) u64 {
+    return pmm.allocContig(@intCast(n)) orelse 0;
+}
 fn kCreateAddrspace() u64 {
     return vmm.createAddressSpace() orelse 0;
 }
@@ -91,7 +94,7 @@ fn kMemmapLen(i: u64) u64 {
 }
 
 fn kMemmapKind(i: u64) u64 {
-    return if (memmapEntry(i)) |e| @intFromEnum(e.type) else 0;
+    return if (memmapEntry(i)) |e| @backingInt(e.type) else 0;
 }
 
 fn kMemFree() u64 {
@@ -161,8 +164,23 @@ fn kTaskState(i: u64) u64 {
     return sched.taskState(i);
 }
 
+// limine doesnt fully enable SSE the only reason i need this
+// is because Zig 0.17 bullshit
+inline fn enableSse() void {
+    asm volatile (
+        \\ mov %%cr0, %%rax
+        \\ and $0xfffb, %%ax
+        \\ or  $0x2, %%ax
+        \\ mov %%rax, %%cr0
+        \\ mov %%cr4, %%rax
+        \\ or  $0x600, %%rax
+        \\ mov %%rax, %%cr4
+        ::: .{ .rax = true, .memory = true });
+}
+
 // entry(_start)
 export fn _start() callconv(.c) noreturn {
+    enableSse();
     serial.init();
     serial.write("if you see this, it means revel didn't shit the bed\r\n");
 
@@ -217,6 +235,7 @@ export fn _start() callconv(.c) noreturn {
         .disk_sectors = &kDiskSectors,
         .disk_read = &kDiskRead,
         .disk_write = &kDiskWrite,
+        .alloc_contig = &kAllocContig,
     };
 
     // hand the kernel heap + framebuffer + low level ops to revo and bring up the vm

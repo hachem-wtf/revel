@@ -8,6 +8,22 @@ const Data = convert.Data;
 const argInt = convert.argInt;
 const emit = serial.emit;
 
+// gils shit
+const Script = struct { name: []const u8, src: []const u8 };
+const scripts = [_]Script{
+    .{ .name = "ls", .src = @embedFile("k_gils_ls") },
+    .{ .name = "tree", .src = @embedFile("k_gils_tree") },
+    .{ .name = "cat", .src = @embedFile("k_gils_cat") },
+    .{ .name = "rm", .src = @embedFile("k_gils_rm") },
+    .{ .name = "mkdir", .src = @embedFile("k_gils_mkdir") },
+    .{ .name = "touch", .src = @embedFile("k_gils_touch") },
+    .{ .name = "cp", .src = @embedFile("k_gils_cp") },
+    .{ .name = "mv", .src = @embedFile("k_gils_mv") },
+    .{ .name = "wc", .src = @embedFile("k_gils_wc") },
+    .{ .name = "head", .src = @embedFile("k_gils_head") },
+    .{ .name = "tail", .src = @embedFile("k_gils_tail") },
+};
+
 // the actual framebuffer, the data layout feels pretty self explanatory
 pub const Fb = struct {
     ptr: [*]u8,
@@ -50,6 +66,7 @@ pub const KernelOps = struct {
     disk_sectors: *const fn () u64,
     disk_read: *const fn (u64, u64) u64, // lba, phys buf -> 1 ok / 0 fail
     disk_write: *const fn (u64, u64) u64, // lba, phys buf -> 1 ok / 0 fail
+    alloc_contig: *const fn (u64) u64, // n contiguous pages -> phys base, 0 on fail
 };
 var g_kops: ?KernelOps = null;
 
@@ -337,7 +354,63 @@ fn hostDiskWrite(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
 }
 
 // pass shit to revo
-pub fn registerPrimitives(vm: *revo.VM) !void {
+fn hostAllocContig(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const n = argInt(u64, args, 0) orelse return HostResult.other("alloc_contig: bad count");
+    return HostResult.data(Data.new.num(kops().alloc_contig(n)));
+}
+
+// pass shit to revo
+fn hostBlitStr(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const phys = argInt(u64, args, 0) orelse return HostResult.other("blit_str: bad addr");
+    const sid = args[1].asString() orelse return HostResult.other("blit_str: not a string");
+    const bytes = vm.stringValue(sid);
+    const dst: [*]u8 = @ptrFromInt(kops().phys_to_virt(phys));
+    @memcpy(dst[0..bytes.len], bytes);
+    return HostResult.data(Data.new.num(bytes.len));
+}
+
+// pass shit to revo
+fn hostPhysToStr(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const phys = argInt(u64, args, 0) orelse return HostResult.other("phys_to_str: bad addr");
+    const len = argInt(usize, args, 1) orelse return HostResult.other("phys_to_str: bad len");
+    const src: [*]const u8 = @ptrFromInt(kops().phys_to_virt(phys));
+    return HostResult.data(try vm.ownValueString(src[0..len]));
+}
+
+// pass shit to revo
+fn hostScriptCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return HostResult.data(Data.new.num(scripts.len));
+}
+
+// pass shit to revo
+fn hostScriptName(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const i = argInt(usize, args, 0) orelse return HostResult.other("script_name: bad index");
+    if (i >= scripts.len) return HostResult.other("script_name: out of range");
+    return HostResult.data(try vm.ownValueString(scripts[i].name));
+}
+
+// pass shit to revo
+fn hostScriptSrc(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const i = argInt(usize, args, 0) orelse return HostResult.other("script_src: bad index");
+    if (i >= scripts.len) return HostResult.other("script_src: out of range");
+    return HostResult.data(try vm.ownValueString(scripts[i].src));
+}
+
+// pass shit to revo
+fn hostEvalScript(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const sid = args[0].asString() orelse return HostResult.other("eval_script: not a string");
+    const src = vm.stringValue(sid);
+    const res = revo.run.runModule(vm, "<script>", src, false) catch |e| {
+        return HostResult.data(try vm.ownValueString(@errorName(e)));
+    };
+    return switch (res) {
+        .ok => HostResult.data(Data.new.nil()),
+        .err => HostResult.data(try vm.ownValueString("script runtime error")),
+    };
+}
+
+// pass shit to revo
+pub fn passShitToRevo(vm: *revo.VM) !void {
     const define = revo.baselib.host.define;
     const T = revo.baselib.host.ParamType;
     try vm.registerGlobal("outb", try vm.installHost("outb", define(&[_]T{ .number, .number }, hostOutb)));
@@ -377,4 +450,12 @@ pub fn registerPrimitives(vm: *revo.VM) !void {
     try vm.registerGlobal("disk_sectors", try vm.installHost("disk_sectors", define(&[_]T{}, hostDiskSectors)));
     try vm.registerGlobal("disk_read", try vm.installHost("disk_read", define(&[_]T{ .number, .number }, hostDiskRead)));
     try vm.registerGlobal("disk_write", try vm.installHost("disk_write", define(&[_]T{ .number, .number }, hostDiskWrite)));
+
+    try vm.registerGlobal("eval_script", try vm.installHost("eval_script", define(&[_]T{.string}, hostEvalScript)));
+    try vm.registerGlobal("script_count", try vm.installHost("script_count", define(&[_]T{}, hostScriptCount)));
+    try vm.registerGlobal("script_name", try vm.installHost("script_name", define(&[_]T{.number}, hostScriptName)));
+    try vm.registerGlobal("script_src", try vm.installHost("script_src", define(&[_]T{.number}, hostScriptSrc)));
+    try vm.registerGlobal("alloc_contig", try vm.installHost("alloc_contig", define(&[_]T{.number}, hostAllocContig)));
+    try vm.registerGlobal("blit_str", try vm.installHost("blit_str", define(&[_]T{ .number, .string }, hostBlitStr)));
+    try vm.registerGlobal("phys_to_str", try vm.installHost("phys_to_str", define(&[_]T{ .number, .number }, hostPhysToStr)));
 }

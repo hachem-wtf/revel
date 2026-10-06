@@ -84,7 +84,7 @@ pub fn taskMax() u64 {
 }
 pub fn taskState(i: u64) u64 {
     if (i >= MAX_TASKS) return 0;
-    return @intFromEnum(tasks[i].state);
+    return @backingInt(tasks[i].state);
 }
 
 var proc_exited_flag: bool = false;

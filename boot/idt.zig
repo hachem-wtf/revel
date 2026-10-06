@@ -29,7 +29,7 @@ const Idtr = packed struct {
     base: u64,
 };
 
-var idt = [_]Gate{@bitCast(@as(u128, 0))} ** 256;
+var idt: [256]Gate = @splat(@bitCast(@as(u128, 0)));
 var idtr: Idtr = undefined;
 
 const names = [_][]const u8{

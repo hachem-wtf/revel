@@ -1,0 +1,14 @@
+# move or rename a file
+
+const context = env.ctx
+if context.argv:len() < 3 do puts("usage: mv <source> <destination>\n") end
+else do
+  const source = abspath(context.argv[1])
+  const destination = abspath(context.argv[2])
+  const size = fs:size(source)
+  if size < 0 do puts("mv: #{source}: no such file\n") end
+  else do
+    const contents = if size > 0 fs:read_bytes(source, 0, size) else ""
+    if fs:store(destination, contents) == 1 do fs:unlink(source) puts("#{source} -> #{destination}\n") end
+  end
+end

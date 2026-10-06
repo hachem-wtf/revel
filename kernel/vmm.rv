@@ -2,7 +2,7 @@
 # everything here only writes small entries we construct, so its f64 safe
 const PTE_ADDR = 0x000FFFFFFFFFF000
 
-fn pte_idx(virt, level) (virt shr (12 + 9 * level)) band 0x1ff
+fn pte_index(virtual_address, level) (virtual_address shr (12 + 9 * level)) band 0x1ff
 
 fn next_table(table, index) do
   const slot = table + index * 8
@@ -14,10 +14,10 @@ fn next_table(table, index) do
   frame
 end
 
-fn as_map(pml4, virt, phys, flags) do
-  const pdpt = next_table(pml4, pte_idx(virt, 3))
-  const pd = next_table(pdpt, pte_idx(virt, 2))
-  const pt = next_table(pd, pte_idx(virt, 1))
-  mem_write(pt + pte_idx(virt, 0) * 8, (phys band PTE_ADDR) bor flags bor 1, 8)
-  invlpg(virt)
+fn as_map(pml4, virtual_address, physical_address, flags) do
+  const pdpt = next_table(pml4, pte_index(virtual_address, 3))
+  const pd = next_table(pdpt, pte_index(virtual_address, 2))
+  const pt = next_table(pd, pte_index(virtual_address, 1))
+  mem_write(pt + pte_index(virtual_address, 0) * 8, (physical_address band PTE_ADDR) bor flags bor 1, 8)
+  invlpg(virtual_address)
 end

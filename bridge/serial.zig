@@ -43,6 +43,10 @@ fn ioOperate(_: ?*anyopaque, operation: std.Io.Operation) std.Io.Cancelable!std.
         .file_read_streaming => .{ .file_read_streaming = error.InputOutput },
         .device_io_control => .{ .device_io_control = -1 },
         .net_receive => .{ .net_receive = .{ error.NetworkDown, 0 } },
+        // no networking on bare metal (yet)
+        .net_send => .{ .net_send = .{ null, 0 } },
+        .net_read => .{ .net_read = error.Unexpected },
+        .net_write => .{ .net_write = error.Unexpected },
     };
 }
 

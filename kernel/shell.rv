@@ -1,190 +1,117 @@
-# this is just a simple prompt to test that shit is working
+# i eventually want the shell to be a standalone program and shit
 
-fn pad(s, width) do
-  let out = s
-  while out:len() < width do out = out ~ " " end
-  return out
+fn pad(text, width) do
+  let result = text
+  while result:len() < width do result = result ~ " " end
+  return result
 end
 
-fn help_row(cmd, desc) puts("    #{pad(cmd, 20)}#{desc}\n")
+fn help_row(label, description) puts("    #{pad(label, 20)}#{description}\n")
 
-fn cmd_help() do
-  puts("\n  shell\n")
-  help_row("help", "show this")
-  help_row("clear", "wipe the screen")
-  help_row("time", "utc clock")
-  help_row("mem", "free / total ram")
-  help_row("uptime", "seconds since boot")
-  help_row("ps", "running processes")
-  help_row("zoom in|out", "scale the font")
-  help_row("echo <text>", "print it back")
-  puts("\n  files\n")
-  help_row("ls [path]", "list a directory")
-  help_row("cd <path>", "change directory")
-  help_row("pwd", "print working dir")
-  help_row("mkdir <path>", "make a directory")
-  help_row("cat <path>", "print a file")
-  help_row("edit <path>", "line editor, . to save")
-  help_row("write <path> <text>", "create or overwrite")
-  help_row("rm <path>", "delete a file or empty dir")
-  help_row("mkfs", "format the disk")
-  puts("\n  programs\n")
-  help_row("run", "list programs")
-  help_row("run <name>", "")
+fn help_group(title, group_name) do
+  puts("\n  #{title}\n")
+  for index in 0..commands:len() do
+    if commands[index].group == group_name do help_row(commands[index].usage, commands[index].help) end
+  end
+end
+
+fn cmd_help(context) do
+  help_group("shell", "shell")
+  help_group("gils (builtin)", "gils")
+  # the rest of gils, and the programs, are real files in /bin now
+  const items = fs:entries("/bin")
+  if items != :nil do
+    puts("\n  gils (/bin scripts)\n")
+    for index in 0..items:len() do
+      const name = items[index].name
+      if (name:len() > 3 and name[(name:len() - 3)..] == ".rv") do help_row(name[0..(name:len() - 3)], "") end
+    end
+    puts("\n  programs (/bin)\n")
+    for index in 0..items:len() do
+      const name = items[index].name
+      if (name:len() <= 3 or name[(name:len() - 3)..] != ".rv") do help_row(name, "") end
+    end
+  end
   puts("\n")
 end
 
 fn welcome() do
-  let fsline = "no filesystem"
-  if fs.ready do fsline = "revelfs mounted" end
+  let fs_status = "no filesystem"
+  if fs.ready do fs_status = "revelfs mounted" end
   puts("\n")
   puts("   kernel written in revo - by an alcoholic\n")
-  puts("   #{(mem_total() shr 20)} MiB ram | #{fsline} | #{prog_count()} programs\n")
+  puts("   #{(mem_total() shr 20)} MiB ram | #{fs_status} | #{prog_count()} programs\n")
   puts("   type help to see what it does\n\n% ")
 end
 
-fn arg_name(line, start) do
+# global so /bin scripts can call it from a nested eval fiber
+global arg_name = fn(line, start) do
   let quoted = :false
   let begin = start
   if (begin < line:len() and line[begin] == "\"") do begin += 1 quoted = :true end
-  let i = begin
+  let index = begin
   if quoted do
-    while (i < line:len() and line[i] != "\"") do i += 1 end
+    while (index < line:len() and line[index] != "\"") do index += 1 end
   end
   else do
-    while (i < line:len() and line[i] != " ") do i += 1 end
+    while (index < line:len() and line[index] != " ") do index += 1 end
   end
-  const name = line[begin..i]
-  let rest = i
+  const name = line[begin..index]
+  let rest = index
   if (quoted and rest < line:len()) do rest += 1 end
   if (rest < line:len() and line[rest] == " ") do rest += 1 end
   { name = name, rest = rest }
 end
 
-global wd = { path = "/" }
-
-global editor = { active = :false, path = "", buf = "" }
-
-fn editor_start(path) do
-  editor.active = :true
-  editor.path = path
-  editor.buf = ""
-  const sz = fs:size(path)
-  if sz > 0 do
-    editor.buf = fs:read_bytes(path, 0, sz)
-    puts(editor.buf)
-  end
-  puts("-- editing #{path}, a single . on a line saves and exits --\n")
-end
-
-fn editor_line(line) do
-  if line == "." do
-    fs:store(editor.path, editor.buf)
-    editor.active = :false
-    puts("saved #{editor.path} (#{editor.buf:len()} bytes)\n% ")
-  end
-  else do editor.buf = editor.buf ~ line ~ "\n" end
-end
-
-fn cmd_edit(line) do
-  const a = arg_name(line, 5)
-  if a.name:len() == 0 do puts("usage: edit <path>\n% ") return :nil end
-  editor_start(abspath(a.name))
-end
-
-fn abspath(arg) do
-  if arg:len() == 0 return wd.path
-  let p = arg
-  if arg[0] != "/" do
-    if wd.path == "/" do p = "/#{arg}" end
-    else do p = "#{wd.path}/#{arg}" end
-  end
-  while (p:len() > 1 and p[p:len() - 1] == "/") do p = p[0..(p:len() - 1)] end
-  return p
-end
-
 fn parent_of(path) do
   if path == "/" return "/"
-  let i = path:len() - 1
-  while (i > 0 and path[i] != "/") do i -= 1 end
-  if i == 0 return "/"
-  return path[0..i]
+  let index = path:len() - 1
+  while (index > 0 and path[index] != "/") do index -= 1 end
+  if index == 0 return "/"
+  return path[0..index]
 end
 
-fn cmd_cd(words) do
-  const arg = if words:len() > 1 words[1] else "/"
+fn cmd_cd(context) do
+  const arg = if context.argv:len() > 1 context.argv[1] else "/"
   const target = if arg == ".." parent_of(wd.path) else abspath(arg)
   if target == "/proc" or target == "/bin" or fs:is_dir(target) do wd.path = target end
   else do puts("cd: #{arg}: not a directory\n") end
 end
 
-fn cmd_pwd() puts("#{wd.path}\n")
+fn cmd_pwd(context) puts("#{wd.path}\n")
 
-fn cmd_ls(words) do
-  const target = if words:len() > 1 abspath(words[1]) else wd.path
-  if vfs_owns(target) do vfs_ls(target) return :nil end
-  const n = fs:ls(target)
-  # the virtual mounts arent real dir entries, overlay them on the root listing
-  if target == "/" do puts("  bin/\n  proc/\n") end
-  else if n == 0 do puts("  (empty)\n") end
-end
-
-fn cmd_mkdir(words) do
-  if words:len() < 2 do puts("usage: mkdir <name>\n") return :nil end
-  fs:mkdir(abspath(words[1]))
-end
-
-fn cmd_write(line) do
-  const a = arg_name(line, 6)
-  if a.name:len() == 0 do puts("usage: write <name> <text>\n") return :nil end
-  fs:write(abspath(a.name), line[a.rest..])
-end
-
-fn cmd_cat(line) do
-  const a = arg_name(line, 4)
-  if a.name:len() == 0 do puts("usage: cat <name>\n") return :nil end
-  const p = abspath(a.name)
-  if vfs_owns(p) do vfs_cat(p) return :nil end
-  fs:cat(p)
-end
-
-fn cmd_rm(line) do
-  const a = arg_name(line, 3)
-  if a.name:len() == 0 do puts("usage: rm <name>\n") return :nil end
-  fs:rm(abspath(a.name))
-end
+fn wipe() console:clear()
+fn cmd_clear(context) wipe()
 
 fn zoom_by(delta) do
-  let scale = con.scale + delta
+  let scale = console.scale + delta
   if scale < 1 do scale = 1 end
   if scale > 6 do scale = 6 end
-  con.scale = scale
-  cmd_clear()
+  console.scale = scale
+  wipe()
   puts("zoom #{scale}x\n")
 end
 
-fn cmd_zoom(words) do
-  const dir = if words:len() > 1 words[1] else ""
-  if dir == "in" do zoom_by(1) end
-  else if dir == "out" do zoom_by(-1) end
+fn cmd_zoom(context) do
+  const direction = if context.argv:len() > 1 context.argv[1] else ""
+  if direction == "in" do zoom_by(1) end
+  else if direction == "out" do zoom_by(-1) end
   else do puts("usage: zoom in | zoom out\n") end
 end
 
-fn cmd_clear() con:clear()
-
 fn bcd(byte) (byte shr 4) * 10 + (byte band 15)
-fn rtc(reg) do
-  outb(0x70, reg)
+fn rtc(cmos_reg) do
+  outb(0x70, cmos_reg)
   inb(0x71)
 end
-fn cmd_time() puts("utc #{bcd(rtc(4))}:#{bcd(rtc(2))}:#{bcd(rtc(0))}\n")
+fn cmd_time(context) puts("utc #{bcd(rtc(4))}:#{bcd(rtc(2))}:#{bcd(rtc(0))}\n")
 
 # 0x prefixed 16 digit hex
-fn hex(n) do
+fn hex(value) do
   const digits = "0123456789abcdef"
-  let out = ""
-  for i in 0..16 do out = out ~ digits[(n shr ((15 - i) * 4)) band 15] end
-  "0x#{out}"
+  let result = ""
+  for index in 0..16 do result = result ~ digits[(value shr ((15 - index) * 4)) band 15] end
+  "0x#{result}"
 end
 
 fn mem_type_name(kind) do
@@ -202,49 +129,55 @@ end
 # the boot memory map dump
 fn dump_memmap() do
   puts("memory map:\n")
-  for i in 0..memmap_count() do
-    puts("  #{hex(memmap_base(i))} len=#{hex(memmap_len(i))} type=#{mem_type_name(memmap_kind(i))}\n")
+  for index in 0..memmap_count() do
+    puts("  #{hex(memmap_base(index))} len=#{hex(memmap_len(index))} type=#{mem_type_name(memmap_kind(index))}\n")
   end
   puts("usable: #{(mem_total() shr 20)} MiB, free: #{(mem_free() shr 20)} MiB\n")
 end
 
-fn cmd_mem() puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB usable\n")
-fn cmd_uptime() puts("#{math.floor(uptime() / 100)}s (#{uptime()} ticks)\n")
-fn cmd_ps() puts("#{proc_count()} process(es) running\n")
+fn cmd_mem(context) puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB usable\n")
+fn cmd_uptime(context) puts("#{math.floor(uptime() / 100)}s (#{uptime()} ticks)\n")
+fn cmd_ps(context) puts("#{proc_count()} process(es) running\n")
+fn cmd_echo(context) do if context.line:len() > 5 puts("#{context.line[5..]}\n") else puts("\n") end
+fn cmd_mkfs(context) fs:format()
+
+fn cmd_run(context) do
+  if context.argv:len() <= 1 do list_progs() return :nil end
+  const parsed = arg_name(context.rest, 0)
+  if run_prog(parsed.name, context.rest[parsed.rest..]) == :true return :hold
+  puts("no such program: #{parsed.name}\n")
+  return :nil
+end
 
 fn run(line) do
-  if editor.active do editor_line(line) return :nil end
+  # the fact that the shell needs to interface directly with ed isnt, very nice
+  if gils_ed_active() do gils_ed_feed(line) return :nil end
   if line:trim():len() == 0 do puts("% ") return :nil end
-  const words = line:split(" ")
-  const cmd = words[0]
-  if cmd == "edit" do cmd_edit(line) return :nil end
-  if cmd == "run" do
-    if words:len() <= 1 do list_progs() puts("% ") return :nil end
-    const prog = words[1]
-    # everything after "run <prog> " is the programs argument string
-    const start = 4 + prog:len() + 1
-    const arg = if line:len() > start line[start..] else ""
-    if run_prog(prog, arg) == :true return :nil
-    puts("% ")
+  const argv = line:split(" ")
+  const context = make_ctx(line, argv)
+  const command = lookup(argv[0])
+  if command != :nil do
+    # :hold means the command took over (modal editor / launched a program) so
+    # we dont draw a fresh prompt, otherwise we do
+    const result = command.handler(context)
+    if result != :hold do puts("% ") end
     return :nil
   end
-  match cmd
-    | "help" => cmd_help()
-    | "clear" => cmd_clear()
-    | "time" => cmd_time()
-    | "mem" => cmd_mem()
-    | "uptime" => cmd_uptime()
-    | "ps" => cmd_ps()
-    | "zoom" => cmd_zoom(words)
-    | "mkfs" => fs:format()
-    | "ls" => cmd_ls(words)
-    | "cat" => cmd_cat(line)
-    | "write" => cmd_write(line)
-    | "rm" => cmd_rm(line)
-    | "mkdir" => cmd_mkdir(words)
-    | "cd" => cmd_cd(words)
-    | "pwd" => cmd_pwd()
-    | "echo" => if line:len() > 5 puts("#{line[5..]}\n") else puts("\n")
-    | _ => puts("unknown command: #{cmd}\n")
-  puts("% ")
+
+  if run_script(argv[0], context) == :true do puts("% ") return :nil end
+  if run_prog(argv[0], context.rest) == :true return :nil
+  puts("#{argv[0]}: command not found\n% ")
 end
+
+register("help", "shell", "show this", cmd_help)
+register("clear", "shell", "wipe the screen", cmd_clear)
+register("time", "shell", "utc clock", cmd_time)
+register("mem", "shell", "free / total ram", cmd_mem)
+register("uptime", "shell", "seconds since boot", cmd_uptime)
+register("ps", "shell", "running processes", cmd_ps)
+register("zoom in|out", "shell", "scale the font", cmd_zoom)
+register("echo <text>", "shell", "print it back", cmd_echo)
+register("mkfs", "shell", "format the disk", cmd_mkfs)
+register("cd <path>", "gils", "change directory", cmd_cd)
+register("pwd", "gils", "print working dir", cmd_pwd)
+register("run [name] [arg]", "shell", "run a program explicitly", cmd_run)

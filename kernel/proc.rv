@@ -10,56 +10,71 @@ fn load_elf(base, arg) do
     return :nil
   end
   const entry = mem_read(base + 24, 8)
-  const phoff = mem_read(base + 32, 8)
-  const phnum = mem_read(base + 56, 2)
-  const phentsize = mem_read(base + 54, 2)
+  const program_header_offset = mem_read(base + 32, 8)
+  const program_header_count = mem_read(base + 56, 2)
+  const program_header_size = mem_read(base + 54, 2)
   const space = as_create()
-  for i in 0..phnum do
-    const phdr = base + phoff + i * phentsize
-    if mem_read(phdr, 4) == PT_LOAD do
-      const offset = mem_read(phdr + 8, 8)
-      const vaddr = mem_read(phdr + 16, 8)
-      const filesz = mem_read(phdr + 32, 8)
-      const memsz = mem_read(phdr + 40, 8)
-      let seg_off = 0
-      while seg_off < memsz do
+  for index in 0..program_header_count do
+    const header = base + program_header_offset + index * program_header_size
+    if mem_read(header, 4) == PT_LOAD do
+      const file_offset = mem_read(header + 8, 8)
+      const virtual_address = mem_read(header + 16, 8)
+      const file_size = mem_read(header + 32, 8)
+      const memory_size = mem_read(header + 40, 8)
+      let segment_offset = 0
+      while segment_offset < memory_size do
         const frame = frame_alloc()
         mem_zero(frame, 4096)
-        if seg_off < filesz do
-          const left = filesz - seg_off
-          mem_copy(frame, base + offset + seg_off, if left > 4096 4096 else left)
+        if segment_offset < file_size do
+          const remaining = file_size - segment_offset
+          mem_copy(frame, base + file_offset + segment_offset, if remaining > 4096 4096 else remaining)
         end
-        as_map(space, vaddr + seg_off, frame, PAGE_FLAGS)
-        seg_off = seg_off + 4096
+        as_map(space, virtual_address + segment_offset, frame, PAGE_FLAGS)
+        segment_offset = segment_offset + 4096
       end
     end
   end
   const stack_top = 0x7fff0000
-  for p in 0..4 do as_map(space, stack_top - (p + 1) * 4096, frame_alloc(), PAGE_FLAGS) end
+  for page in 0..4 do as_map(space, stack_top - (page + 1) * 4096, frame_alloc(), PAGE_FLAGS) end
   let arg_ptr = 0
   const arg_len = arg:len()
   if arg_len > 0 do
-    const argframe = frame_alloc()
-    mem_zero(argframe, 4096)
-    for k in 0..arg_len do mem_write(argframe + k, arg[k]:ascii(), 1) end
-    as_map(space, ARG_VADDR, argframe, PAGE_FLAGS)
+    const arg_frame = frame_alloc()
+    mem_zero(arg_frame, 4096)
+    for index in 0..arg_len do mem_write(arg_frame + index, arg[index]:ascii(), 1) end
+    as_map(space, ARG_VADDR, arg_frame, PAGE_FLAGS)
     arg_ptr = ARG_VADDR
   end
   proc_run(space, entry, stack_top, arg_ptr, arg_len)
 end
 
+# one reused contiguous buffer to stage an elf image read off the disk, since
+# load_elf wants a flat base to mem_read from and a file lands in scattered frames
+# its a weird arch but wtv
+global loader = { scratch = 0 }
+const SCRATCH_PAGES = 64
+
+fn load_file_elf(path, arg) do
+  const size = fs:size(path)
+  if size < 0 do puts("#{path}: not found\n") return :false end
+  if size > SCRATCH_PAGES * 4096 do puts("#{path}: too big to load\n") return :false end
+  if loader.scratch == 0 do loader.scratch = alloc_contig(SCRATCH_PAGES) end
+  if loader.scratch == 0 do puts("no memory for elf load\n") return :false end
+  blit_str(loader.scratch, fs:read_bytes(path, 0, size))
+  load_elf(loader.scratch, arg)
+  return :true
+end
+
 fn run_prog(name, arg) do
-  let n = name
-  if n:starts_with?("/bin/") n = n[5..]
-  for i in 0..prog_count() do
-    if prog_name(i) == n do load_elf(prog_phys(i), arg) return :true end
-  end
-  puts("no such program: #{name}\n")
-  return :false
+  let bare_name = name
+  if bare_name:starts_with?("/bin/") bare_name = bare_name[5..]
+  const path = "/bin/#{bare_name}"
+  if fs:size(path) < 0 return :false
+  return load_file_elf(path, arg)
 end
 
 fn list_progs() do
   puts("programs:")
-  for i in 0..prog_count() do puts(" #{prog_name(i)}") end
+  for index in 0..prog_count() do puts(" #{prog_name(index)}") end
   puts("\n")
 end

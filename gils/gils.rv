@@ -1,0 +1,50 @@
+# gils: better than Gnu utILS
+global commands = {}
+
+fn register(usage, group, help, handler) do
+  const name = usage:split(" ")[0]
+  commands:push({ name = name, usage = usage, group = group, help = help, handler = handler })
+end
+
+fn lookup(name) do
+  for index in 0..commands:len() do
+    if commands[index].name == name return commands[index]
+  end
+  return :nil
+end
+
+fn make_ctx(line, argv) do
+  const name = argv[0]
+  let rest = ""
+  const cut = name:len() + 1
+  if line:len() > cut do rest = line[cut..] end
+  return { line = line, argv = argv, rest = rest }
+end
+
+# scripts read their args off env.ctx, stashed here before eval
+global env = { ctx = :nil }
+
+# working dir + path resolver, shared by every gils tool and the shell. lives
+# here so its declared before anything that uses it gets concatenated
+global wd = { path = "/" }
+
+global abspath = fn(arg) do
+  if arg:len() == 0 return wd.path
+  let path = arg
+  if arg[0] != "/" do
+    if wd.path == "/" do path = "/#{arg}" end
+    else do path = "#{wd.path}/#{arg}" end
+  end
+  while (path:len() > 1 and path[path:len() - 1] == "/") do path = path[0..(path:len() - 1)] end
+  return path
+end
+
+fn run_script(name, ctx) do
+  const path = "/bin/#{name}.rv"
+  const size = fs:size(path)
+  if size < 0 return :false
+  env.ctx = ctx
+  const error_msg = eval_script(fs:read_bytes(path, 0, size))
+  if error_msg != :nil do puts("#{name}: #{error_msg}\n") end
+  return :true
+end

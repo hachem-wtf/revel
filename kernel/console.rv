@@ -1,79 +1,76 @@
-const FW = 8  # glyph width in pixels
-const FH = 16 # glyph height in pixels (8x16 vga bitmap font)
-const FG = 0xd0d0d0
-const CON_BG = 0x101018
-const CUR = 0x50fa7b
+const FONT_WIDTH = 8   # glyph width in pixels
+const FONT_HEIGHT = 16 # glyph height in pixels (8x16 vga bitmap font)
+const FG_COLOR = 0xd0d0d0
+const BG_COLOR = 0x101018
+const CURSOR_COLOR = 0x50fa7b
 
-global con = {
-  col = 0, row = 0, scale = 1, shown = :false, cur_x = 0, cur_y = 0, blink = 0,
+global console = {
+  column = 0, row = 0, scale = 1, shown = :false, cursor_x = 0, cursor_y = 0, blink = 0,
 
   # cell size in pixels at the current zoom
-  cell_w = fn(self) FW * self.scale,
-  cell_h = fn(self) FH * self.scale,
-  cols = fn(self) fb_width() / self:cell_w(),
-  rows = fn(self) fb_height() / self:cell_h(),
+  cell_width = fn(self) FONT_WIDTH * self.scale,
+  cell_height = fn(self) FONT_HEIGHT * self.scale,
+  columns = fn(self) fb_width() / self:cell_width(),
+  rows = fn(self) fb_height() / self:cell_height(),
 
-  draw_glyph = fn(self, col, row, ch) do
-    const x0 = col * self:cell_w()
-    const y0 = row * self:cell_h()
-    fill_rect(x0, y0, self:cell_w(), self:cell_h(), CON_BG) # clear the cell
-    const code = ch:ascii()
+  draw_glyph = fn(self, column, row, character) do
+    const origin_x = column * self:cell_width()
+    const origin_y = row * self:cell_height()
+    fill_rect(origin_x, origin_y, self:cell_width(), self:cell_height(), BG_COLOR) # clear the cell
+    const code = character:ascii()
     if code < 32 return :nil
     if code > 127 return :nil
     const glyph = FONT[code - 32]
-    for fy in 0..FH do
-      const bits = glyph[fy]
-      for fx in 0..FW do
-        if (bits shr fx) band 1 == 1 fill_rect(x0 + fx * self.scale, y0 + fy * self.scale, self.scale, self.scale, FG)
+    for glyph_row in 0..FONT_HEIGHT do
+      const bits = glyph[glyph_row]
+      for glyph_col in 0..FONT_WIDTH do
+        if (bits shr glyph_col) band 1 == 1 fill_rect(origin_x + glyph_col * self.scale, origin_y + glyph_row * self.scale, self.scale, self.scale, FG_COLOR)
       end
     end
   end,
 
   newline = fn(self) do
-    self.col = 0
+    self.column = 0
     self.row += 1
     if self.row >= self:rows() do
-      fb_scroll(self:cell_h(), CON_BG)
+      fb_scroll(self:cell_height(), BG_COLOR)
       self.row = self:rows() - 1
     end
   end,
 
   # we dont do shift/cntrl, thats a job for future me lmao
   # NOTE: future me kinda delt with it, i was mad drunk
-  putc = fn(self, ch) do
-    const code = ch:ascii()
+  putc = fn(self, character) do
+    const code = character:ascii()
     if code == 10 do self:newline() return :nil end # \n
-    if code == 13 do self.col = 0 return :nil end   # \r
-    if code == 8 do                                 # backspace: move left
-      if self.col > 0 self.col -= 1
+    if code == 13 do self.column = 0 return :nil end # \r
+    if code == 8 do                                  # backspace: move left
+      if self.column > 0 self.column -= 1
       return :nil
     end
     if code < 32 return :nil
-    self:draw_glyph(self.col, self.row, ch)
-    self.col += 1
-    if self.col >= self:cols() self:newline()
+    self:draw_glyph(self.column, self.row, character)
+    self.column += 1
+    if self.column >= self:columns() self:newline()
   end,
 
   clear = fn(self) do
-    fill_rect(0, 0, fb_width(), fb_height(), CON_BG)
-    self.col = 0
+    fill_rect(0, 0, fb_width(), fb_height(), BG_COLOR)
+    self.column = 0
     self.row = 0
   end,
 
-  # the cursor is an overlay block. its cleared before any drawing and shown after,
-  # so it never sits under a glyph, cur_x/cur_y remember where it was actually drawn
-  # so we always clear the right cell even after the head moved (backspace and shit)
   cursor_clear = fn(self) do
     if self.shown do
-      fill_rect(self.cur_x * self:cell_w(), self.cur_y * self:cell_h(), self:cell_w(), self:cell_h(), CON_BG)
+      fill_rect(self.cursor_x * self:cell_width(), self.cursor_y * self:cell_height(), self:cell_width(), self:cell_height(), BG_COLOR)
       self.shown = :false
     end
   end,
 
   cursor_show = fn(self) do
-    self.cur_x = self.col
-    self.cur_y = self.row
-    fill_rect(self.cur_x * self:cell_w(), self.cur_y * self:cell_h(), self:cell_w(), self:cell_h(), CUR)
+    self.cursor_x = self.column
+    self.cursor_y = self.row
+    fill_rect(self.cursor_x * self:cell_width(), self.cursor_y * self:cell_height(), self:cell_width(), self:cell_height(), CURSOR_COLOR)
     self.shown = :true
   end,
 
@@ -84,36 +81,36 @@ global con = {
   end,
 }
 
-fn puts(str) serial_puts(str)
+global puts = fn(text) serial_puts(text)
 
 global flush_console = fn() do
-  con:cursor_clear()
-  con:drain()
-  con.blink = 0
-  con:cursor_show()
+  console:cursor_clear()
+  console:drain()
+  console.blink = 0
+  console:cursor_show()
 end
 
 global on_tick = fn(ticks) do
   let byte = serial_next()
   if byte >= 0 do
-    con:cursor_clear()
-    con:putc(string.of_ascii(byte))
-    con:drain()
-    con.blink = 0
-    con:cursor_show()
+    console:cursor_clear()
+    console:putc(string.of_ascii(byte))
+    console:drain()
+    console.blink = 0
+    console:cursor_show()
     return :nil
   end
   if proc_exited() do
-    con:cursor_clear()
+    console:cursor_clear()
     puts("% ")
-    con:drain()
-    con.blink = 0
-    con:cursor_show()
+    console:drain()
+    console.blink = 0
+    console:cursor_show()
     return :nil
   end
-  con.blink += 1
-  if con.blink >= 50 do
-    con.blink = 0
-    if con.shown con:cursor_clear() else con:cursor_show()
+  console.blink += 1
+  if console.blink >= 50 do
+    console.blink = 0
+    if console.shown console:cursor_clear() else console:cursor_show()
   end
 end

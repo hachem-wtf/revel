@@ -1,16 +1,17 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
-    // Default to ReleaseSafe because Debug pulls Zig's
-    // UBSan runtime and other sanitization, which needs
-    // f128/SSE ops, which i don't provide.
-    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "optimize mode") orelse .ReleaseSafe;
+// the gils coreutils
+const gils_tools = .{ "gils", "ls", "tree", "cat", "rm", "mkdir", "touch", "cp", "mv", "wc", "head", "tail", "ed" };
 
-    // The kernel must NOT touch SSE/MMX/AVX until it has
-    // enabled them itself, so I strip those features and
-    // let the compiler use a soft-float ABI
-    // `code_model = .kernel` keeps relocations valid for
-    // the higher-half load address in boot/linker.ld.
+pub fn build(b: *std.Build) void {
+    // Default to ReleaseSafe because Debug pulls Zig's UBSan runtime and other
+    // sanitization, which needs f128/SSE ops, which i don't provide.
+    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "optimize mode") orelse .safe;
+
+    // The kernel must NOT touch SSE/MMX/AVX until it has enabled them itself, so
+    // I strip those features and let the compiler use a soft-float ABI
+    // `code_model = .kernel` keeps relocations valid for the higher-half load
+    // address in boot/linker.ld.
     //
     // In other words. Going raw baby
     var query: std.Target.Query = .{
@@ -18,13 +19,11 @@ pub fn build(b: *std.Build) void {
         .os_tag = .freestanding,
         .abi = .none,
     };
+
     const Feature = std.Target.x86.Feature;
     query.cpu_features_sub.addFeature(@intFromEnum(Feature.mmx));
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.sse));
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.sse2));
     query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx));
     query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx2));
-    query.cpu_features_add.addFeature(@intFromEnum(Feature.soft_float));
 
     const target = b.resolveTargetQuery(query);
 
@@ -78,10 +77,13 @@ pub fn build(b: *std.Build) void {
         bridge_mod.addAnonymousImport(e[0], .{ .root_source_file = b.path(e[1]) });
     }
 
+    // load gils
+    inline for (gils_tools) |g| {
+        bridge_mod.addAnonymousImport("k_gils_" ++ g, .{ .root_source_file = b.path("gils/" ++ g ++ ".rv") });
+    }
+
     kernel.root_module.addImport("bridge", bridge_mod);
 
-    // each ring 3 program compiles to its own freestanding elf, embedded under
-    // user_<name>. boot copies them to frames and the shells `run <name>` loads one
     inline for (.{ "hexview", "calc", "primes", "save" }) |prog| {
         const cc = b.addSystemCommand(&.{
             "zig",                  "cc",

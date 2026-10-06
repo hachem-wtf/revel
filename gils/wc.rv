@@ -1,0 +1,22 @@
+# word count
+
+const context = env.ctx
+if context.argv:len() < 2 do puts("usage: wc <path>\n") end
+else do
+  const path = abspath(context.argv[1])
+  const size = fs:size(path)
+  if size < 0 do puts("wc: #{path}: no such file\n") end
+  else do
+    const contents = if size > 0 fs:read_bytes(path, 0, size) else ""
+    let line_count = 0
+    let word_count = 0
+    let in_word = :false
+    for index in 0..contents:len() do
+      const character = contents[index]
+      if character == "\n" do line_count += 1 end
+      if (character == " " or character == "\n" or character == "\t") do in_word = :false end
+      else if in_word == :false do word_count += 1 in_word = :true end
+    end
+    puts("  #{line_count}  #{word_count}  #{size}  #{context.argv[1]}\n")
+  end
+end

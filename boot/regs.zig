@@ -24,7 +24,7 @@ pub const Frame = extern struct {
     ss: u64,
 };
 
-// push/pop the 15 gprs in frames exact order 
+// push/pop the 15 gprs in frames exact order
 // (rax pushed first -> highest field, r15 last -> at rsp = &frame)
 pub const PUSH_GPRS =
     \\push %rax

@@ -5,7 +5,7 @@ pit_init()
 pic_unmask(0) # pit      (irq0) -> cursor blink / uptime
 pic_unmask(1) # keyboard (irq1)
 
-cmd_clear()
+wipe()
 dump_memmap()
 
 fs:mount()

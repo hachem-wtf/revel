@@ -1,4 +1,15 @@
 # js dw about this ok?
+
+fn seed_bin() do
+  fs:mkdir("/bin")
+  for index in 0..prog_count() do
+    fs:store("/bin/#{prog_name(index)}", phys_to_str(prog_phys(index), prog_size(index)))
+  end
+  for index in 0..script_count() do
+    fs:store("/bin/#{script_name(index)}.rv", script_src(index))
+  end
+end
+
 fn seed_fs() do
   fs:mkdir("/usr")
   fs:mkdir("/etc")
@@ -7,4 +18,6 @@ fn seed_fs() do
   fs:store("/etc/motd", "welcome to revel")
   fs:store("/home/balls.txt", "its lowk insane how big my balls are")
   fs:store("/home/i have big balls.txt", "dude my balls are actually massive")
+
+  seed_bin()
 end

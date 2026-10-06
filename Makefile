@@ -3,6 +3,10 @@
 # make kernel    : just compile the kernel ELF
 # make clean     : remove build output (kernel, ISO, caches)
 # make distclean : also remove Limine's built host tool
+#
+# WARNING: DO NOT FUCK W/ THE \ DELIMETERS THEY ARE MADE TO BE PRETTY
+#          ON OUTPUT, NOT PRETTY IN CODE. IF YOU DONT LIKE IT, GO
+#          SHOKE ON A TIT
 
 ZIG  ?= zig
 QEMU ?= qemu-system-x86_64
@@ -22,9 +26,7 @@ kernel:
 limine/limine:
 	$(MAKE) -C limine
 
-# WARNING: DO NOT FUCK W/ THE \ DELIMETERS THEY ARE MADE TO BE PRETTY
-#          ON OUTPUT, NOT PRETTY IN CODE. IF YOU DONT LIKE IT, GO
-#          SHOKE ON A TIT
+
 iso: kernel limine/limine
 	rm -rf iso_root
 	mkdir -p iso_root/boot/limine iso_root/EFI/BOOT
