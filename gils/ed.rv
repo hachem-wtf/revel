@@ -112,7 +112,7 @@ fn ed_write(state, command) do
   let path = state.path
   if command:len() > 1 do
     const filename = command[1..]:trim()
-    if filename:len() > 0 do path = abspath(filename) end
+    if filename:len() > 0 do path = expand_path(filename) end
   end
   if path:len() == 0 do puts("?\n") return :nil end
   const contents = ed_join(state.lines)
@@ -134,7 +134,7 @@ fn gils_ed(context) do
   ed_state.input = :false
   ed_state.dirty = :false
   ed_state.lines = {}
-  ed_state.path = if context.argv:len() > 1 abspath(context.argv[1]) else ""
+  ed_state.path = if context.argv:len() > 1 expand_path(context.argv[1]) else ""
   if ed_state.path:len() > 0 do
     const size = fs:size(ed_state.path)
     if size > 0 do

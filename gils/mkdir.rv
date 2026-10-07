@@ -2,4 +2,4 @@
 
 const context = env.ctx
 if context.argv:len() < 2 do puts("usage: mkdir <path>\n") end
-else do fs:mkdir(abspath(context.argv[1])) end
+else do fs:mkdir(expand_path(context.argv[1])) end

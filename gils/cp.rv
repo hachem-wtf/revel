@@ -4,8 +4,8 @@
 const context = env.ctx
 if context.argv:len() < 3 do puts("usage: cp <source> <destination>\n") end
 else do
-  const source = abspath(context.argv[1])
-  const destination = abspath(context.argv[2])
+  const source = expand_path(context.argv[1])
+  const destination = expand_path(context.argv[2])
   const size = fs:size(source)
   if size < 0 do puts("cp: #{source}: no such file\n") end
   else do

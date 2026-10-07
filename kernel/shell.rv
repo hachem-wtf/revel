@@ -86,7 +86,7 @@ end
 
 fn cmd_cd(context) do
   const arg = if context.argv:len() > 1 context.argv[1] else "/"
-  const target = if arg == ".." parent_of(wd.path) else abspath(arg)
+  const target = if arg == ".." parent_of(wd.path) else expand_path(arg)
   if target == "/proc" or target == "/bin" or fs:is_dir(target) do wd.path = target end
   else do puts("cd: #{arg}: not a directory\n") end
 end
@@ -179,7 +179,7 @@ end
 
 fn font_file(name) do
   if has_slash(name) do
-    const p = abspath(name)
+    const p = expand_path(name)
     if (ends_with(p, ".ttf") and fs:size(p) >= 0) return { path = p, kind = :ttf }
     if (ends_with(p, ".psf") and fs:size(p) >= 0) return { path = p, kind = :psf }
     if fs:size(p ~ ".ttf") >= 0 return { path = p ~ ".ttf", kind = :ttf }
@@ -282,11 +282,42 @@ fn cmd_ps(context) puts("#{proc_count()} process(es) running\n")
 fn cmd_echo(context) do if context.line:len() > 5 puts("#{context.line[5..]}\n") else puts("\n") end
 fn cmd_mkfs(context) fs:format()
 
+fn exec_file(target) do
+  let candidates = {}
+  if has_slash(target) do
+    candidates:push(expand_path(target))
+    candidates:push(expand_path(target) ~ ".rv")
+  end
+  else do
+    candidates:push(expand_path(target))
+    candidates:push(expand_path(target) ~ ".rv")
+    candidates:push("/bin/#{target}")
+    candidates:push("/bin/#{target}.rv")
+  end
+  for index in 0..candidates:len() do
+    const path = candidates[index]
+    if fs:size(path) >= 0 do
+      const head = fs:read_bytes(path, 0, 4)
+      if (head:len() >= 4 and head[0]:ascii() == 127 and head[1]:ascii() == 69 and head[2]:ascii() == 76 and head[3]:ascii() == 70) return { path = path, kind = :elf }
+      return { path = path, kind = :script }
+    end
+  end
+  return { path = target, kind = :none }
+end
+
 fn cmd_run(context) do
   if context.argv:len() <= 1 do list_progs() return :nil end
-  const parsed = arg_name(context.rest, 0)
-  if run_prog(parsed.name, context.rest[parsed.rest..]) == :true return :hold
-  puts("no such program: #{parsed.name}\n")
+  const target = context.argv[1]
+  const info = exec_file(target)
+  if info.kind == :none do puts("run: #{target}: not found\n") return :nil end
+  const sub_argv = context.rest:split(" ")
+  const sub_ctx = make_ctx(context.rest, sub_argv)
+  if info.kind == :script do
+    run_script_path(info.path, target, sub_ctx)
+    return :nil
+  end
+  if load_file_elf(info.path, sub_ctx.rest) == :true return :hold
+  puts("run: #{target}: not executable\n")
   return :nil
 end
 
@@ -324,4 +355,4 @@ register("echo <text>", "shell", "print it back", cmd_echo)
 register("mkfs", "shell", "format the disk", cmd_mkfs)
 register("cd <path>", "gils", "change directory", cmd_cd)
 register("pwd", "gils", "print working dir", cmd_pwd)
-register("run [name] [arg]", "shell", "run a program explicitly", cmd_run)
+register("run <path> [args]", "shell", "run a program or revo script", cmd_run)

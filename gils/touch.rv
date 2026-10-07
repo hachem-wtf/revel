@@ -3,7 +3,7 @@
 const context = env.ctx
 if context.argv:len() < 2 do puts("usage: touch <path>\n") end
 else do
-  const path = abspath(context.argv[1])
+  const path = expand_path(context.argv[1])
   if fs:is_dir(path) do puts("touch: #{path}: is a directory\n") end
   else if fs:size(path) < 0 do fs:store(path, "") end
 end

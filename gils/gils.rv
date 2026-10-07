@@ -24,23 +24,23 @@ end
 # scripts read their args off env.ctx, stashed here before eval
 global env = { ctx = :nil }
 
-global abspath = fn(arg) do
-  if arg:len() == 0 return wd.path
-  let path = arg
-  if arg[0] != "/" do
-    if wd.path == "/" do path = "/#{arg}" end
-    else do path = "#{wd.path}/#{arg}" end
+# first use of unless in history
+global expand_path = fn(path) do
+  if path:len() == 0 return wd.path
+  unless (path[0] == "/") do
+    const slash = unless (wd.path == "/") "/" else ""
+    path = "#{wd.path}#{slash}#{path}"
   end
-  while (path:len() > 1 and path[path:len() - 1] == "/") do path = path[0..(path:len() - 1)] end
   return path
 end
 
-fn run_script(name, ctx) do
-  const path = "/bin/#{name}.rv"
+fn run_script_path(path, label, ctx) do
   const size = fs:size(path)
   if size < 0 return :false
   env.ctx = ctx
   const error_msg = eval_script(fs:read_bytes(path, 0, size))
-  if error_msg != :nil do puts("#{name}: #{error_msg}\n") end
+  if error_msg != :nil do puts("#{label}: #{error_msg}\n") end
   return :true
 end
+
+fn run_script(name, ctx) run_script_path("/bin/#{name}.rv", name, ctx)

@@ -18,7 +18,7 @@ else do
   let limit = 10
   let path_arg = context.argv[1]
   if (context.argv:len() >= 3 and parse_pid(context.argv[1]) >= 0) do limit = parse_pid(context.argv[1]) path_arg = context.argv[2] end
-  const lines = file_lines(abspath(path_arg))
+  const lines = file_lines(expand_path(path_arg))
   if lines == :nil do puts("head: no such file\n") end
   else do
     let index = 0
