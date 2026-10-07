@@ -15,6 +15,10 @@ if (disk_sectors() != 0 and fs.ready == :false) do
   seed_fs()
 end
 
+if fs:size("/etc/profile") >= 0 do
+  run_script_path("/etc/profile", "profile", make_ctx("", { "" }))
+end
+
 # lung will be happy
 const default_face = load_ttf("/fonts/terminess.ttf", 32)
 if default_face != :nil do

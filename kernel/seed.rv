@@ -23,8 +23,16 @@ fn seed_fs() do
   fs:mkdir("/home")
 
   fs:store("/etc/motd", "welcome to revel")
-  fs:store("/home/balls.txt", "its lowk insane how big my balls are")
-  fs:store("/home/i have big balls.txt", "dude my balls are actually massive")
+  fs:store("/etc/profile", """
+    # /etc/profile runs once at shell startup, keep it quick
+
+    if fs:size("/etc/motd") > 0 do
+      puts(fs:read_bytes("/etc/motd", 0, motd_size))
+      puts("\n")
+    end
+    """)
+  fs:store("/home/balls.txt", "its lowk insane how big my balls are lol jk\n\t- hachem")
+  fs:store("/home/i have big balls.txt", "dude my balls are actually massive lol jk\n\t- hachem")
 
   seed_bin()
   seed_fonts()

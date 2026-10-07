@@ -34,7 +34,13 @@ fn decode_key(code) do
   if code == 0x9d do shell.ctrl = :false return :nil end # ctrl up
   if code >= 128 return :nil            # other releases
   if code == 28 return "\n"             # enter
-  if code == 14 return "\x08"           # backspace
+  if code == 14 do
+    if shell.ctrl do
+      return "\x7f"
+    end
+
+    return "\x08"
+  end # backspace (ctrl: word erase)
   if code < 2 return :nil
   if code >= KEYMAP:len() return :nil
   const character = if shell.shift KEYMAP_SHIFT[code] else KEYMAP[code]
