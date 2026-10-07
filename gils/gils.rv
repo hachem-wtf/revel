@@ -24,10 +24,6 @@ end
 # scripts read their args off env.ctx, stashed here before eval
 global env = { ctx = :nil }
 
-# working dir + path resolver, shared by every gils tool and the shell. lives
-# here so its declared before anything that uses it gets concatenated
-global wd = { path = "/" }
-
 global abspath = fn(arg) do
   if arg:len() == 0 return wd.path
   let path = arg

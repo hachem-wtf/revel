@@ -26,7 +26,6 @@ kernel:
 limine/limine:
 	$(MAKE) -C limine
 
-
 iso: kernel limine/limine
 	rm -rf iso_root
 	mkdir -p iso_root/boot/limine iso_root/EFI/BOOT

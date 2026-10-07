@@ -70,7 +70,9 @@ pub fn build(b: *std.Build) void {
         .{ "k_vfs", "kernel/vfs.rv" },
         .{ "k_seed", "kernel/seed.rv" },
         .{ "k_proc", "kernel/proc.rv" },
+        .{ "k_ttf", "kernel/ttf.rv" },
         .{ "k_shell", "kernel/shell.rv" },
+        .{ "k_tty", "kernel/tty.rv" },
         .{ "k_input", "kernel/input.rv" },
         .{ "k_main", "kernel/main.rv" },
     }) |e| {
@@ -83,6 +85,18 @@ pub fn build(b: *std.Build) void {
     }
 
     kernel.root_module.addImport("bridge", bridge_mod);
+
+    inline for (.{
+        .{ "font_vga16", "fonts/vga16.psf" },
+        .{ "font_vga8", "fonts/vga8.psf" },
+        .{ "font_sun16", "fonts/sun16.psf" },
+        .{ "font_acorn8", "fonts/acorn8.psf" },
+        .{ "font_pearl8", "fonts/pearl8.psf" },
+        .{ "font_dejavu", "fonts/dejavu.ttf" },
+        .{ "font_terminess", "fonts/terminess.ttf" },
+    }) |e| {
+        kernel.root_module.addAnonymousImport(e[0], .{ .root_source_file = b.path(e[1]) });
+    }
 
     inline for (.{ "hexview", "calc", "primes", "save" }) |prog| {
         const cc = b.addSystemCommand(&.{

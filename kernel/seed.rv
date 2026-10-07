@@ -10,6 +10,13 @@ fn seed_bin() do
   end
 end
 
+fn seed_fonts() do
+  fs:mkdir("/fonts")
+  for index in 0..font_count() do
+    fs:store("/fonts/#{font_name(index)}", phys_to_str(font_phys(index), font_size(index)))
+  end
+end
+
 fn seed_fs() do
   fs:mkdir("/usr")
   fs:mkdir("/etc")
@@ -20,4 +27,5 @@ fn seed_fs() do
   fs:store("/home/i have big balls.txt", "dude my balls are actually massive")
 
   seed_bin()
+  seed_fonts()
 end

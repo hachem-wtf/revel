@@ -330,6 +330,22 @@ global fs = {
     return result
   end,
 
+  read_into = fn(self, path, dest) do
+    const entry = self:resolve(path)
+    if entry == :nil or entry.type == T_DIR return 0
+    let block = entry.first
+    let offset = 0
+    let remaining = entry.size
+    while (block != 0 and block != END and remaining > 0) do
+      const next_block = self:fat_get(block)
+      disk_read(block, dest + offset)
+      offset += BLOCK
+      remaining -= BLOCK
+      block = next_block
+    end
+    return entry.size
+  end,
+
   cat = fn(self, path) do
     if self:ensure() == :false return :nil
     const entry = self:resolve(path)

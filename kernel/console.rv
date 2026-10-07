@@ -4,14 +4,77 @@ const FG_COLOR = 0xd0d0d0
 const BG_COLOR = 0x101018
 const CURSOR_COLOR = 0x50fa7b
 
-global console = {
-  column = 0, row = 0, scale = 1, shown = :false, cursor_x = 0, cursor_y = 0, blink = 0,
+global wd = { path = "/" }
+global prompt = fn() "revel:#{wd.path}$ "
 
-  # cell size in pixels at the current zoom
-  cell_width = fn(self) FONT_WIDTH * self.scale,
-  cell_height = fn(self) FONT_HEIGHT * self.scale,
+# runtime font bs
+fn embolden(byte, row) do return (byte bor (byte shl 1)) band 0xFF end
+fn slant(byte, row) do return (byte shl ((FONT_HEIGHT - 1 - row) shr 2)) band 0xFF end
+
+fn remap_glyphs(transform) do
+  let out = {}
+  for glyph_index in 0..FONT:len() do
+    const glyph = FONT[glyph_index]
+    let rows = {}
+    for row_index in 0..FONT_HEIGHT do rows:push(transform(glyph[row_index], row_index)) end
+    out:push(rows)
+  end
+  return out
+end
+
+global reverse8 = fn(byte) do
+  let out = 0
+  for bit in 0..8 do
+    if (byte shr bit) band 1 == 1 do out = out bor (1 shl (7 - bit)) end
+  end
+  return out
+end
+
+global fonts = {}
+global add_font = fn(name, glyphs, width, height, kind, path, size) do
+  for index in 0..fonts:len() do
+    if fonts[index].name == name do
+      fonts[index].glyphs = glyphs
+      fonts[index].width = width
+      fonts[index].height = height
+      fonts[index].kind = kind
+      fonts[index].path = path
+      fonts[index].size = size
+      return :nil
+    end
+  end
+  fonts:push({ name = name, glyphs = glyphs, width = width, height = height, kind = kind, path = path, size = size })
+end
+global find_font = fn(name) do
+  for index in 0..fonts:len() do
+    if fonts[index].name == name return fonts[index]
+  end
+  return :nil
+end
+
+add_font("vga", FONT, FONT_WIDTH, FONT_HEIGHT, :bitmap, :nil, 0)
+add_font("bold", remap_glyphs(embolden), FONT_WIDTH, FONT_HEIGHT, :bitmap, :nil, 0)
+add_font("italic", remap_glyphs(slant), FONT_WIDTH, FONT_HEIGHT, :bitmap, :nil, 0)
+add_font("bolditalic", remap_glyphs(fn(byte, row) do return slant(embolden(byte, row), row) end), FONT_WIDTH, FONT_HEIGHT, :bitmap, :nil, 0)
+
+global console = {
+  column = 0, row = 0, scale = 1, shown = :false, cursor_x = 0, cursor_y = 0, blink = 0, font = FONT, font_width = FONT_WIDTH, font_height = FONT_HEIGHT, font_entry = find_font("vga"),
+
+  # this is now font dependent
+  cell_width = fn(self) self.font_width * self.scale,
+  cell_height = fn(self) self.font_height * self.scale,
   columns = fn(self) fb_width() / self:cell_width(),
   rows = fn(self) fb_height() / self:cell_height(),
+
+  set_font = fn(self, entry) do
+    self.font = entry.glyphs
+    self.font_width = entry.width
+    self.font_height = entry.height
+    self.font_entry = entry
+    # a ttf renders at its true pixel size so we js bitmap zoom scale
+    if entry.kind == :ttf do self.scale = 1 end
+    self:clear()
+  end,
 
   draw_glyph = fn(self, column, row, character) do
     const origin_x = column * self:cell_width()
@@ -20,10 +83,10 @@ global console = {
     const code = character:ascii()
     if code < 32 return :nil
     if code > 127 return :nil
-    const glyph = FONT[code - 32]
-    for glyph_row in 0..FONT_HEIGHT do
+    const glyph = self.font[code - 32]
+    for glyph_row in 0..self.font_height do
       const bits = glyph[glyph_row]
-      for glyph_col in 0..FONT_WIDTH do
+      for glyph_col in 0..self.font_width do
         if (bits shr glyph_col) band 1 == 1 fill_rect(origin_x + glyph_col * self.scale, origin_y + glyph_row * self.scale, self.scale, self.scale, FG_COLOR)
       end
     end
@@ -102,7 +165,7 @@ global on_tick = fn(ticks) do
   end
   if proc_exited() do
     console:cursor_clear()
-    puts("% ")
+    puts(prompt())
     console:drain()
     console.blink = 0
     console:cursor_show()

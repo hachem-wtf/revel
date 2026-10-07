@@ -11,6 +11,9 @@ const MIN_BLOCK: usize = 32; // header + a usable scrap, dont split below this
 
 var heap_start: usize = 0;
 var heap_end: usize = 0;
+// next fit rover optimization. essentially its resume scanning where hte last
+// alloc landed instead of heap_start everytime. it was O(n) before
+var rover: usize = 0;
 
 inline fn word(b: usize) *usize {
     return @ptrFromInt(b);
@@ -48,25 +51,38 @@ fn allocImpl(_: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) 
     if (alignment.toByteUnits() > ALIGN) return null;
     const need = alignUp(HEADER + len, ALIGN);
 
-    var b = heap_start;
-    while (b < heap_end) {
-        if (!blkUsed(b)) {
-            // lazy coalesce
-            var size = blkSize(b);
-            while (b + size < heap_end and !blkUsed(b + size)) size += blkSize(b + size);
-            setBlk(b, size, false);
+    if (rover < heap_start or rover >= heap_end) rover = heap_start;
 
-            if (size >= need) {
-                if (size >= need + MIN_BLOCK) {
-                    setBlk(b, need, true);
-                    setBlk(b + need, size - need, false); // the leftover tail
-                } else {
-                    setBlk(b, size, true);
+    // next fit bull shit
+    var b = rover;
+    var limit = heap_end;
+    var pass: u8 = 0;
+    while (pass < 2) : (pass += 1) {
+        while (b < limit) {
+            if (!blkUsed(b)) {
+                // lazy coalesce
+                var size = blkSize(b);
+                while (b + size < heap_end and !blkUsed(b + size)) size += blkSize(b + size);
+                setBlk(b, size, false);
+
+                if (size >= need) {
+                    if (size >= need + MIN_BLOCK) {
+                        setBlk(b, need, true);
+                        setBlk(b + need, size - need, false); // the leftover tail
+                        rover = b + need;
+                    } else {
+                        setBlk(b, size, true);
+                        rover = b + size;
+                    }
+                    if (rover >= heap_end) rover = heap_start;
+                    return @ptrFromInt(b + HEADER);
                 }
-                return @ptrFromInt(b + HEADER);
             }
+            b += blkSize(b);
         }
-        b += blkSize(b);
+        // wrap
+        b = heap_start;
+        limit = rover;
     }
     return null;
 }

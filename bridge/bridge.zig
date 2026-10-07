@@ -29,7 +29,9 @@ const init_program = blk: {
     for (gils_embedded) |g| s = s ++ @embedFile("k_gils_" ++ g) ++ "\n";
 
     s = s ++ @embedFile("k_proc") ++ "\n" ++
+        @embedFile("k_ttf") ++ "\n" ++
         @embedFile("k_shell") ++ "\n" ++
+        @embedFile("k_tty") ++ "\n" ++
         @embedFile("k_input") ++ "\n" ++
         @embedFile("k_main");
     break :blk s;

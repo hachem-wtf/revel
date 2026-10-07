@@ -1,0 +1,286 @@
+# so many fucking hours wasted man i hate fonts so much
+# fuck bezier
+# fuck revo
+# fuck revel
+# fuck ttf
+# fuck lung
+# fuck me
+# im like 90% confident this works, but im like 10% confident its fucked
+fn ttf_mod(a, b) a - math.floor(a / b) * b
+
+fn ttf_u8(d, o) mem_read(d + o, 1)
+fn ttf_u16(d, o) mem_read(d + o, 1) * 256 + mem_read(d + o + 1, 1)
+fn ttf_i16(d, o) do
+  const v = ttf_u16(d, o)
+  if v >= 32768 return v - 65536
+  return v
+end
+fn ttf_u32(d, o) ((mem_read(d + o, 1) * 256 + mem_read(d + o + 1, 1)) * 256 + mem_read(d + o + 2, 1)) * 256 + mem_read(d + o + 3, 1)
+
+fn ttf_tag_eq(d, o, tag) do
+  for i in 0..4 do if mem_read(d + o + i, 1) != tag[i]:ascii() return :false end
+  return :true
+end
+
+fn ttf_table(d, tag) do
+  const n = ttf_u16(d, 4)
+  for i in 0..n do
+    const rec = 12 + i * 16
+    if ttf_tag_eq(d, rec, tag) return ttf_u32(d, rec + 8)
+  end
+  return -1
+end
+
+fn ttf_cmap_sub(d, cmap_off) do
+  const n = ttf_u16(d, cmap_off + 2)
+  let best = -1
+  for i in 0..n do
+    const rec = cmap_off + 4 + i * 8
+    const plat = ttf_u16(d, rec)
+    const enc = ttf_u16(d, rec + 2)
+    if (plat == 3 and (enc == 1 or enc == 0)) or plat == 0 do best = cmap_off + ttf_u32(d, rec + 4) end
+  end
+  return best
+end
+
+fn ttf_glyph_of(d, sub, c) do
+  if ttf_u16(d, sub) != 4 return 0
+  const segCount = ttf_u16(d, sub + 6) / 2
+  const endBase = sub + 14
+  const startBase = endBase + segCount * 2 + 2
+  const deltaBase = startBase + segCount * 2
+  const rangeBase = deltaBase + segCount * 2
+  for i in 0..segCount do
+    if c <= ttf_u16(d, endBase + i * 2) do
+      const startC = ttf_u16(d, startBase + i * 2)
+      if c < startC return 0
+      const idro = ttf_u16(d, rangeBase + i * 2)
+      if idro == 0 return (c + ttf_i16(d, deltaBase + i * 2)) band 0xFFFF
+      const g = ttf_u16(d, rangeBase + i * 2 + idro + (c - startC) * 2)
+      if g == 0 return 0
+      return (g + ttf_i16(d, deltaBase + i * 2)) band 0xFFFF
+    end
+  end
+  return 0
+end
+
+fn ttf_glyph_offset(d, loca, long, g) do
+  if long return ttf_u32(d, loca + g * 4)
+  return ttf_u16(d, loca + g * 2) * 2
+end
+
+fn ttf_advance(d, hmtx, numH, g) do
+  if g < numH return ttf_u16(d, hmtx + g * 4)
+  return ttf_u16(d, hmtx + (numH - 1) * 4)
+end
+
+fn ttf_add_line(edges, x0, y0, x1, y1) edges:push({ ax = x0, ay = y0, bx = x1, by = y1 })
+
+fn ttf_add_quad(edges, x0, y0, cx, cy, x1, y1, n) do
+  let px = x0
+  let py = y0
+  for i in 1..(n + 1) do
+    const t = i / n
+    const mt = 1 - t
+    const qx = mt * mt * x0 + 2 * mt * t * cx + t * t * x1
+    const qy = mt * mt * y0 + 2 * mt * t * cy + t * t * y1
+    ttf_add_line(edges, px, py, qx, qy)
+    px = qx
+    py = qy
+  end
+end
+
+fn ttf_contour(pts, edges, nsub) do
+  const m = pts:len()
+  if m < 2 return :nil
+  let exp = {}
+  for i in 0..m do
+    exp:push(pts[i])
+    const j = ttf_mod(i + 1, m)
+    if (pts[i].on == :false and pts[j].on == :false) do
+      exp:push({ x = (pts[i].x + pts[j].x) / 2, y = (pts[i].y + pts[j].y) / 2, on = :true })
+    end
+  end
+  const n = exp:len()
+  let s = -1
+  for i in 0..n do if (s < 0 and exp[i].on) do s = i end end
+  if s < 0 return :nil
+  let cx = exp[s].x
+  let cy = exp[s].y
+  let k = 1
+  while k <= n do
+    const a = exp[ttf_mod(s + k, n)]
+    if a.on do
+      ttf_add_line(edges, cx, cy, a.x, a.y)
+      cx = a.x
+      cy = a.y
+      k += 1
+    end
+    else do
+      const b = exp[ttf_mod(s + k + 1, n)]
+      ttf_add_quad(edges, cx, cy, a.x, a.y, b.x, b.y, nsub)
+      cx = b.x
+      cy = b.y
+      k += 2
+    end
+  end
+end
+
+# how about you contour my fucking asshole
+fn ttf_glyph_edges(d, glyf, loca, long, g, scale, ox, baseline, edges, nsub) do
+  const off = ttf_glyph_offset(d, loca, long, g)
+  const next = ttf_glyph_offset(d, loca, long, g + 1)
+  if next <= off return :nil # empty glyph
+  const base = glyf + off
+  const nc = ttf_i16(d, base)
+  if nc < 0 return :nil # skip
+  let ends = {}
+  for i in 0..nc do ends:push(ttf_u16(d, base + 10 + i * 2)) end
+  const npts = ends[nc - 1] + 1
+  let p = base + 10 + nc * 2
+  p += 2 + ttf_u16(d, p) # skip instructions
+  let flags = {}
+  while flags:len() < npts do
+    const f = ttf_u8(d, p)
+    p += 1
+    flags:push(f)
+    if (f band 0x08) != 0 do
+      let rep = ttf_u8(d, p)
+      p += 1
+      while rep > 0 do flags:push(f) rep -= 1 end
+    end
+  end
+  let xs = {}
+  let x = 0
+  for i in 0..npts do
+    const f = flags[i]
+    if (f band 0x02) != 0 do
+      const dx = ttf_u8(d, p)
+      p += 1
+      if (f band 0x10) != 0 do x += dx end else do x -= dx end
+    end
+    else do
+      if (f band 0x10) == 0 do x += ttf_i16(d, p) p += 2 end
+    end
+    xs:push(x)
+  end
+  let ys = {}
+  let y = 0
+  for i in 0..npts do
+    const f = flags[i]
+    if (f band 0x04) != 0 do
+      const dy = ttf_u8(d, p)
+      p += 1
+      if (f band 0x20) != 0 do y += dy end else do y -= dy end
+    end
+    else do
+      if (f band 0x20) == 0 do y += ttf_i16(d, p) p += 2 end
+    end
+    ys:push(y)
+  end
+  # split into contours
+  let start = 0
+  for ci in 0..nc do
+    const stop = ends[ci]
+    let pts = {}
+    for i in start..(stop + 1) do
+      pts:push({ x = xs[i] * scale + ox, y = baseline - ys[i] * scale, on = (flags[i] band 0x01) != 0 })
+    end
+    ttf_contour(pts, edges, nsub)
+    start = stop + 1
+  end
+end
+
+fn ttf_fill(edges, w, h) do
+  let rows = {}
+  for py in 0..h do
+    const yc = py + 0.5
+    let cross = {}
+    for e in 0..edges:len() do
+      const ed = edges[e]
+      const y0 = ed.ay
+      const y1 = ed.by
+      if ((y0 <= yc and yc < y1) or (y1 <= yc and yc < y0)) do
+        const t = (yc - y0) / (y1 - y0)
+        let dir = 1
+        if y1 < y0 do dir = -1 end
+        cross:push({ x = ed.ax + t * (ed.bx - ed.ax), dir = dir })
+      end
+    end
+    # sort crossings left to right
+    # insertion sort
+    for a in 1..cross:len() do
+      const key = cross[a]
+      let b = a - 1
+      while (b >= 0 and cross[b].x > key.x) do
+        cross[b + 1] = cross[b]
+        b -= 1
+      end
+      cross[b + 1] = key
+    end
+    let bits = 0
+    let wind = 0
+    for k in 0..cross:len() do
+      wind += cross[k].dir
+      if (wind != 0 and k + 1 < cross:len()) do
+        const xa = cross[k].x
+        const xb = cross[k + 1].x
+        if xb > xa do
+          let any = :false
+          for px in 0..w do
+            if (px + 0.5 >= xa and px + 0.5 < xb) do bits = bits bor (1 shl px) any = :true end
+          end
+          if any == :false do
+            const mid = math.floor((xa + xb) / 2)
+            if (mid >= 0 and mid < w) do bits = bits bor (1 shl mid) end
+          end
+        end
+      end
+    end
+    rows:push(bits)
+  end
+  return rows
+end
+
+global ttf_io = { buf = 0, pages = 512 }
+
+global load_ttf = fn(path, size) do
+  const total = fs:size(path)
+  if total < 12 return :nil
+  if ttf_io.buf == 0 do ttf_io.buf = alloc_contig(ttf_io.pages) end
+  if ttf_io.buf == 0 return :nil
+  if total > ttf_io.pages * 4096 return :nil
+  fs:read_into(path, ttf_io.buf)
+  const d = ttf_io.buf
+  const head = ttf_table(d, "head")
+  const maxp = ttf_table(d, "maxp")
+  const cmap = ttf_table(d, "cmap")
+  const loca = ttf_table(d, "loca")
+  const glyf = ttf_table(d, "glyf")
+  const hhea = ttf_table(d, "hhea")
+  const hmtx = ttf_table(d, "hmtx")
+  if (head < 0 or cmap < 0 or loca < 0 or glyf < 0 or hhea < 0) return :nil
+  const upm = ttf_u16(d, head + 18)
+  if upm == 0 return :nil
+  const long = ttf_i16(d, head + 50) == 1
+  const ascent = ttf_i16(d, hhea + 4)
+  const descent = ttf_i16(d, hhea + 6)
+  const numH = ttf_u16(d, hhea + 34)
+  const scale = size / upm
+  const baseline = math.floor(ascent * scale)
+  let height = math.floor((ascent - descent) * scale) + 1
+  const sub = ttf_cmap_sub(d, cmap)
+  if sub < 0 return :nil
+  const mgate = ttf_glyph_of(d, sub, 77)   # 'M'
+  let width = math.floor(ttf_advance(d, hmtx, numH, mgate) * scale) + 1
+  if width < 2 do width = math.floor(size * 0.6) + 1 end
+  const nsub = 5
+  let glyphs = {}
+  for code in 32..128 do
+    const g = ttf_glyph_of(d, sub, code)
+    let edges = {}
+    ttf_glyph_edges(d, glyf, loca, long, g, scale, 1, baseline, edges, nsub)
+    glyphs:push(ttf_fill(edges, width, height))
+  end
+  return { glyphs = glyphs, width = width, height = height }
+end

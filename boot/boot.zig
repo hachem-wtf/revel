@@ -9,6 +9,7 @@ const heap = @import("heap.zig");
 const vmm = @import("vmm.zig");
 const user = @import("user.zig");
 const elf = @import("elf.zig");
+const fontdata = @import("fonts.zig");
 const keyboard = @import("keyboard.zig");
 const timer = @import("timer.zig");
 const sched = @import("sched.zig");
@@ -160,6 +161,38 @@ fn kTaskMax() u64 {
     return sched.taskMax();
 }
 
+// i dont actually like implementing fonts in any project
+// it be revel or any opengl or vulkan or whatever the fuck
+// fonts are always the ugh parts of a projects
+// just so much boilerplate
+const FontBlob = struct { name: []const u8, phys: u64, size: u64 };
+var g_fonts: [fontdata.fonts.len]FontBlob = undefined;
+
+fn loadFonts() void {
+    for (fontdata.fonts, 0..) |f, i| {
+        const pages = (f.bytes.len + 4095) / 4096;
+        const phys = pmm.allocContig(pages) orelse @panic("no room for an embedded font");
+        @memcpy(@as([*]u8, @ptrFromInt(pmm.physToVirt(phys)))[0..f.bytes.len], f.bytes);
+        g_fonts[i] = .{ .name = f.name, .phys = phys, .size = f.bytes.len };
+    }
+}
+
+fn kFontCount() u64 {
+    return g_fonts.len;
+}
+
+fn kFontPhys(i: u64) u64 {
+    return g_fonts[i].phys;
+}
+
+fn kFontName(i: u64) []const u8 {
+    return g_fonts[i].name;
+}
+
+fn kFontSize(i: u64) u64 {
+    return g_fonts[i].size;
+}
+
 fn kTaskState(i: u64) u64 {
     return sched.taskState(i);
 }
@@ -206,6 +239,7 @@ export fn _start() callconv(.c) noreturn {
     ata.init();
 
     loadPrograms();
+    loadFonts();
     // the event loop below is scheduler task 0 (the kernel), running in the
     // current cr3. user tasks spawned by `run` get time fucked against it
     sched.init(vmm.activePml4());
@@ -236,6 +270,10 @@ export fn _start() callconv(.c) noreturn {
         .disk_read = &kDiskRead,
         .disk_write = &kDiskWrite,
         .alloc_contig = &kAllocContig,
+        .font_count = &kFontCount,
+        .font_phys = &kFontPhys,
+        .font_name = &kFontName,
+        .font_size = &kFontSize,
     };
 
     // hand the kernel heap + framebuffer + low level ops to revo and bring up the vm

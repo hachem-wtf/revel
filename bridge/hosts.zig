@@ -67,6 +67,11 @@ pub const KernelOps = struct {
     disk_read: *const fn (u64, u64) u64, // lba, phys buf -> 1 ok / 0 fail
     disk_write: *const fn (u64, u64) u64, // lba, phys buf -> 1 ok / 0 fail
     alloc_contig: *const fn (u64) u64, // n contiguous pages -> phys base, 0 on fail
+
+    font_count: *const fn () u64,
+    font_phys: *const fn (u64) u64,
+    font_name: *const fn (u64) []const u8,
+    font_size: *const fn (u64) u64,
 };
 var g_kops: ?KernelOps = null;
 
@@ -281,6 +286,29 @@ fn hostProgSize(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
 }
 
 // pass shit to revo
+fn hostFontCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return HostResult.data(Data.new.num(kops().font_count()));
+}
+
+// pass shit to revo
+fn hostFontPhys(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const i = argInt(u64, args, 0) orelse return HostResult.other("font_phys: bad index");
+    return HostResult.data(Data.new.num(kops().font_phys(i)));
+}
+
+// pass shit to revo
+fn hostFontName(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const i = argInt(u64, args, 0) orelse return HostResult.other("font_name: bad index");
+    return HostResult.data(try vm.ownValueString(kops().font_name(i)));
+}
+
+// pass shit to revo
+fn hostFontSize(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const i = argInt(u64, args, 0) orelse return HostResult.other("font_size: bad index");
+    return HostResult.data(Data.new.num(kops().font_size(i)));
+}
+
+// pass shit to revo
 fn hostTaskMax(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return HostResult.data(Data.new.num(kops().task_max()));
 }
@@ -436,6 +464,10 @@ pub fn passShitToRevo(vm: *revo.VM) !void {
     try vm.registerGlobal("prog_phys", try vm.installHost("prog_phys", define(&[_]T{.number}, hostProgPhys)));
     try vm.registerGlobal("prog_name", try vm.installHost("prog_name", define(&[_]T{.number}, hostProgName)));
     try vm.registerGlobal("prog_size", try vm.installHost("prog_size", define(&[_]T{.number}, hostProgSize)));
+    try vm.registerGlobal("font_count", try vm.installHost("font_count", define(&[_]T{}, hostFontCount)));
+    try vm.registerGlobal("font_phys", try vm.installHost("font_phys", define(&[_]T{.number}, hostFontPhys)));
+    try vm.registerGlobal("font_name", try vm.installHost("font_name", define(&[_]T{.number}, hostFontName)));
+    try vm.registerGlobal("font_size", try vm.installHost("font_size", define(&[_]T{.number}, hostFontSize)));
     try vm.registerGlobal("task_max", try vm.installHost("task_max", define(&[_]T{}, hostTaskMax)));
     try vm.registerGlobal("task_state", try vm.installHost("task_state", define(&[_]T{.number}, hostTaskState)));
     try vm.registerGlobal("memmap_count", try vm.installHost("memmap_count", define(&[_]T{}, hostMemmapCount)));

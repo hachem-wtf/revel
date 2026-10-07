@@ -124,7 +124,7 @@ end
 
 fn ed_quit(state) do
   state.active = :false
-  puts("% ")
+  puts(prompt())
 end
 
 global ed_state = { active = :false, input = :false, path = "", lines = {}, dot = 0, insert_at = 0, dirty = :false }

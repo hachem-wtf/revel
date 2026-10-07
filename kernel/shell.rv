@@ -6,7 +6,11 @@ fn pad(text, width) do
   return result
 end
 
-fn help_row(label, description) puts("    #{pad(label, 20)}#{description}\n")
+fn help_row(label, description) do
+  let col = pad(label, 22)
+  if label:len() >= 22 do col = label ~ "  " end
+  puts("    #{col}#{description}\n")
+end
 
 fn help_group(title, group_name) do
   puts("\n  #{title}\n")
@@ -32,6 +36,14 @@ fn cmd_help(context) do
       if (name:len() <= 3 or name[(name:len() - 3)..] != ".rv") do help_row(name, "") end
     end
   end
+
+  puts("\n  fonts (font <name>)\n")
+  for index in 0..fonts:len() do help_row(fonts[index].name, "8x#{fonts[index].height}") end
+  const font_files = fs:entries("/fonts")
+  if font_files != :nil do
+    puts("\n  fonts on disk (font load /fonts/x.psf)\n")
+    for index in 0..font_files:len() do help_row(font_files[index].name, "") end
+  end
   puts("\n")
 end
 
@@ -41,7 +53,8 @@ fn welcome() do
   puts("\n")
   puts("   kernel written in revo - by an alcoholic\n")
   puts("   #{(mem_total() shr 20)} MiB ram | #{fs_status} | #{prog_count()} programs\n")
-  puts("   type help to see what it does\n\n% ")
+  puts("   type help to see what it does\n\n")
+  puts(prompt())
 end
 
 # global so /bin scripts can call it from a nested eval fiber
@@ -84,6 +97,21 @@ fn wipe() console:clear()
 fn cmd_clear(context) wipe()
 
 fn zoom_by(delta) do
+  const entry = console.font_entry
+  # ttf is vector, stepping the size interactively is fine
+  if (entry != :nil and entry.kind == :ttf) do
+    let size = entry.size + delta * 4
+    if size < 8 do size = 8 end
+    if size > 72 do size = 72 end
+    if size == entry.size do puts("zoom #{size}px\n") return :nil end
+    const face = load_ttf(entry.path, size)
+    if face == :nil do puts("zoom: rasterize failed\n") return :nil end
+    add_font(entry.name, face.glyphs, face.width, face.height, :ttf, entry.path, size)
+    console:set_font(find_font(entry.name))
+    puts("zoom #{size}px\n")
+    return :nil
+  end
+  # bitmap fonts js use integer pixel scale
   let scale = console.scale + delta
   if scale < 1 do scale = 1 end
   if scale > 6 do scale = 6 end
@@ -97,6 +125,119 @@ fn cmd_zoom(context) do
   if direction == "in" do zoom_by(1) end
   else if direction == "out" do zoom_by(-1) end
   else do puts("usage: zoom in | zoom out\n") end
+end
+
+fn font_basename(path) do
+  let start = 0
+  let index = 0
+  while index < path:len() do
+    if path[index] == "/" do start = index + 1 end
+    index += 1
+  end
+  let name = path[start..]
+  let dot = -1
+  for i in 0..name:len() do if name[i] == "." do dot = i end end
+  if dot > 0 do name = name[0..dot] end
+  return name
+end
+
+fn load_psf(path) do
+  const size = fs:size(path)
+  if size < 4 return :nil
+  const data = fs:read_bytes(path, 0, size)
+  if (data[0]:ascii() != 0x36 or data[1]:ascii() != 0x04) do return :nil end
+  const height = data[3]:ascii()
+  if (height == 0 or size < 4 + 128 * height) do return :nil end
+  let glyphs = {}
+  for code in 32..128 do
+    const base = 4 + code * height
+    let rows = {}
+    for row in 0..height do rows:push(reverse8(data[base + row]:ascii())) end
+    glyphs:push(rows)
+  end
+  return { glyphs = glyphs, width = 8, height = height }
+end
+
+fn has_slash(text) do
+  for index in 0..text:len() do if text[index] == "/" return :true end
+  return :false
+end
+
+fn ends_with(text, suffix) do
+  if text:len() < suffix:len() return :false
+  return text[(text:len() - suffix:len())..] == suffix
+end
+
+fn str_to_int(text) do
+  let value = 0
+  for index in 0..text:len() do
+    const code = text[index]:ascii()
+    if (code >= 48 and code <= 57) do value = value * 10 + (code - 48) end
+  end
+  return value
+end
+
+fn font_file(name) do
+  if has_slash(name) do
+    const p = abspath(name)
+    if (ends_with(p, ".ttf") and fs:size(p) >= 0) return { path = p, kind = :ttf }
+    if (ends_with(p, ".psf") and fs:size(p) >= 0) return { path = p, kind = :psf }
+    if fs:size(p ~ ".ttf") >= 0 return { path = p ~ ".ttf", kind = :ttf }
+    if fs:size(p ~ ".psf") >= 0 return { path = p ~ ".psf", kind = :psf }
+    return { path = p, kind = :none }
+  end
+  if fs:size("/fonts/#{name}.psf") >= 0 return { path = "/fonts/#{name}.psf", kind = :psf }
+  if fs:size("/fonts/#{name}.ttf") >= 0 return { path = "/fonts/#{name}.ttf", kind = :ttf }
+  return { path = name, kind = :none }
+end
+
+fn cmd_font(context) do
+  if context.argv:len() < 2 do
+    puts("fonts:")
+    for index in 0..fonts:len() do puts(" #{fonts[index].name}(#{fonts[index].width}x#{fonts[index].height})") end
+    puts("\n")
+    const font_files = fs:entries("/fonts")
+    if font_files != :nil do
+      puts("on disk:")
+      for index in 0..font_files:len() do puts(" #{font_files[index].name}") end
+      puts("\n")
+    end
+    return :nil
+  end
+  # `font load <path> [size]` still works, but a bare name/path is the same thing
+  let name = context.argv[1]
+  let arg_at = 1
+  if name == "load" do
+    if context.argv:len() < 3 do puts("usage: font load <path> [size]\n") return :nil end
+    name = context.argv[2]
+    arg_at = 2
+  end
+  # an explicit size (ttf only) forces a fresh rasterize. without one we just
+  # switch to whatever is already in the registry under that name
+  let size = 0
+  if context.argv:len() > arg_at + 1 do size = str_to_int(context.argv[arg_at + 1]) end
+  if size == 0 do
+    const existing = find_font(name)
+    if existing != :nil do console:set_font(existing) return :nil end
+  end
+  const info = font_file(name)
+  if info.kind == :none do puts("font: #{name}: no such font\n") return :nil end
+  const reg_name = font_basename(info.path)
+  if info.kind == :psf do
+    const prior = find_font(reg_name)
+    if prior != :nil do console:set_font(prior) return :nil end
+    const parsed = load_psf(info.path)
+    if parsed == :nil do puts("font: #{name}: not a psf font\n") return :nil end
+    add_font(reg_name, parsed.glyphs, parsed.width, parsed.height, :bitmap, :nil, 0)
+    console:set_font(find_font(reg_name))
+    return :nil
+  end
+  # ttf: rasterize ascii at the requested size (default 18)
+  if size == 0 do size = 18 end
+  const face = load_ttf(info.path, size)
+  if face == :nil do puts("font: #{name}: bad ttf\n") return :nil end
+  add_font(reg_name, face.glyphs, face.width, face.height, :ttf, info.path, size)
+  console:set_font(find_font(reg_name))
 end
 
 fn bcd(byte) (byte shr 4) * 10 + (byte band 15)
@@ -151,8 +292,9 @@ end
 
 fn run(line) do
   # the fact that the shell needs to interface directly with ed isnt, very nice
+  # this is a TODO btw
   if gils_ed_active() do gils_ed_feed(line) return :nil end
-  if line:trim():len() == 0 do puts("% ") return :nil end
+  if line:trim():len() == 0 do puts(prompt()) return :nil end
   const argv = line:split(" ")
   const context = make_ctx(line, argv)
   const command = lookup(argv[0])
@@ -160,13 +302,14 @@ fn run(line) do
     # :hold means the command took over (modal editor / launched a program) so
     # we dont draw a fresh prompt, otherwise we do
     const result = command.handler(context)
-    if result != :hold do puts("% ") end
+    if result != :hold do puts(prompt()) end
     return :nil
   end
 
-  if run_script(argv[0], context) == :true do puts("% ") return :nil end
+  if run_script(argv[0], context) == :true do puts(prompt()) return :nil end
   if run_prog(argv[0], context.rest) == :true return :nil
-  puts("#{argv[0]}: command not found\n% ")
+  puts("#{argv[0]}: command not found\n")
+  puts(prompt())
 end
 
 register("help", "shell", "show this", cmd_help)
@@ -176,6 +319,7 @@ register("mem", "shell", "free / total ram", cmd_mem)
 register("uptime", "shell", "seconds since boot", cmd_uptime)
 register("ps", "shell", "running processes", cmd_ps)
 register("zoom in|out", "shell", "scale the font", cmd_zoom)
+register("font [name] [size]", "shell", "switch/load a console font (psf or ttf)", cmd_font)
 register("echo <text>", "shell", "print it back", cmd_echo)
 register("mkfs", "shell", "format the disk", cmd_mkfs)
 register("cd <path>", "gils", "change directory", cmd_cd)
