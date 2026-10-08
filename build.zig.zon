@@ -2,7 +2,7 @@
     .name = .revel,
     .version = "0.1.0",
     .fingerprint = 0x453ae5f0bb5a7c9f,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .revo = .{ .path = "revo" },
     },

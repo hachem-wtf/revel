@@ -19,220 +19,329 @@ const END = 0xffff       # end of chain marker in the fat
 const T_FILE = 1
 const T_DIR = 2
 
-fn split_path(path) do
+#* into non empty parts *#
+fn split_path(path) -> table<string> do
   const raw_parts = path:split("/")
   let parts = {}
+
   for index in 0..raw_parts:len() do
-    if raw_parts[index]:len() > 0 parts:push(raw_parts[index])
+    if (raw_parts[index]:len() > 0) parts:push(raw_parts[index])
   end
+
   return parts
 end
 
-# scratch is a spare sector for superblocks/dirs/data, fat is a separate scratch
-# so fat lookups dont trample a dir block were mid edit.
 global fs = {
-  scratch = 0, fat = 0, ready = :false, total = 0, root = 0,
+  # scratch is a spare sector for superblocks/dirs/data
+  scratch = 0,
+  # fat is a separate scratch
+  # so fat lookups dont trample a dir block were mid edit.
+  fat = 0,
+  ready = :false, total = 0, root = 0,
 
-  fat_get = fn(self, block) do
+  fn fat_get(self, block) -> num do
     disk_read(FAT_LBA + (block shr 8), self.fat)
-    mem_read(self.fat + (block band 255) * 2, 2)
+
+    return mem_read(self.fat + (block band 255) * 2, 2)
   end,
 
-  fat_set = fn(self, block, value) do
+  fn fat_set(self, block, value) do
     const sector = FAT_LBA + (block shr 8)
     disk_read(sector, self.fat)
     mem_write(self.fat + (block band 255) * 2, value, 2)
     disk_write(sector, self.fat)
   end,
 
-  fat_alloc = fn(self) do
+  fn fat_alloc(self) -> num do
     let block = DATA_LBA
-    while block < self.total do
+
+    while (block < self.total) do
       disk_read(FAT_LBA + (block shr 8), self.fat)
+
       let offset = block band 255
+
       while (offset < 256 and block < self.total) do
-        if mem_read(self.fat + offset * 2, 2) == 0 return block
+        if mem_read(self.fat + offset * 2, 2) == 0 do
+          return block
+        end
+
         offset += 1
         block += 1
       end
     end
-    0
+
+    return 0
   end,
 
-  free_chain = fn(self, first) do
+  fn free_chain(self, first) do
     let block = first
+
     while (block != 0 and block != END) do
       const next_block = self:fat_get(block)
+
       self:fat_set(block, 0)
       block = next_block
     end
   end,
 
-  # entry is 32 bytes:
-  # +0 type (0 free/1 file/2 dir)
-  # +1 name len
-  # +2 first block
-  # +4 size
-  # +8 name bytes
-  ent_name = fn(self, entry_offset) do
+  #* entry is 32 bytes:
+  - +0 type (0 free/1 file/2 dir)
+  - +1 name len
+  - +2 first block
+  - +4 size
+  - +8 name bytes *#
+  fn ent_name(self, entry_offset) -> string do
     const name_length = mem_read(self.scratch + entry_offset + 1, 1)
     let result = ""
-    for index in 0..name_length do result = result ~ string.of_ascii(mem_read(self.scratch + entry_offset + 8 + index, 1)) end
-    result
+
+    for index in 0..name_length do
+      result = result ~ string.of_ascii(mem_read(self.scratch + entry_offset + 8 + index, 1))
+    end
+
+    return result
   end,
 
-  ent_write = fn(self, entry_offset, type, name, first, size) do
+  fn ent_write(self, entry_offset, type, name, first, size) do
     mem_write(self.scratch + entry_offset, type, 1)
     mem_write(self.scratch + entry_offset + 1, name:len(), 1)
     mem_write(self.scratch + entry_offset + 2, first, 2)
     mem_write(self.scratch + entry_offset + 4, size, 4)
-    for index in 0..name:len() do mem_write(self.scratch + entry_offset + 8 + index, name[index]:ascii(), 1) end
+
+    for index in 0..name:len() do
+      mem_write(self.scratch + entry_offset + 8 + index, name[index]:ascii(), 1)
+    end
   end,
 
-  dir_lookup = fn(self, dir_first, name) do
+  fn dir_lookup(self, dir_first, name) -> { type: num, first: num, size: num } | :nil do
     let block = dir_first
+
     while (block != 0 and block != END) do
       const next_block = self:fat_get(block)
+
       disk_read(block, self.scratch)
+
       for slot in 0..ENTS do
         const entry_offset = slot * 32
+
         if mem_read(self.scratch + entry_offset, 1) != 0 and self:ent_name(entry_offset) == name do
           return { type = mem_read(self.scratch + entry_offset, 1), first = mem_read(self.scratch + entry_offset + 2, 2), size = mem_read(self.scratch + entry_offset + 4, 4) }
         end
       end
+
       block = next_block
     end
+
     return :nil
   end,
 
-  # add or overwrite `name` in the dir
-  # grows a block if every slot is taken
-  dir_set = fn(self, dir_first, name, type, first, size) do
+  #* add or overwrite `name` in the dir
+     grows a block if every slot is taken *#
+  fn dir_set(self, dir_first, name, type, first, size) -> bool do
     let block = dir_first
     let found_block = 0
     let found_offset = 0
     let free_block = 0
     let free_offset = -1
     let last_block = dir_first
+
     while (block != 0 and block != END) do
       last_block = block
+
       const next_block = self:fat_get(block)
+
       disk_read(block, self.scratch)
+
       for slot in 0..ENTS do
         const entry_offset = slot * 32
+
         if mem_read(self.scratch + entry_offset, 1) == 0 do
-          if free_offset < 0 do free_block = block free_offset = entry_offset end
-        end
-        else do
-          if self:ent_name(entry_offset) == name do found_block = block found_offset = entry_offset end
+          if free_offset < 0 do
+            free_block = block
+            free_offset = entry_offset
+          end
+        end else do
+          if self:ent_name(entry_offset) == name do
+            found_block = block
+            found_offset = entry_offset
+          end
         end
       end
+
       block = next_block
     end
 
     let target_block = 0
     let target_offset = 0
-    if found_block != 0 do target_block = found_block target_offset = found_offset end
-    else if free_offset >= 0 do target_block = free_block target_offset = free_offset end
-    else do
-      const new_block = self:fat_alloc()
-      if new_block == 0 return :false
-      self:fat_set(new_block, END)
-      self:fat_set(last_block, new_block)
-      mem_zero(self.scratch, BLOCK)
-      disk_write(new_block, self.scratch)
-      target_block = new_block
-      target_offset = 0
-    end
+
+    match
+    | found_block != 0 => do
+        target_block = found_block
+        target_offset = found_offset
+      end
+    | free_offset >= 0 => do
+        target_block = free_block
+        target_offset = free_offset
+      end
+    | _ => do
+        const new_block = self:fat_alloc()
+
+        if new_block == 0 do
+          return :false
+        end
+
+        self:fat_set(new_block, END)
+        self:fat_set(last_block, new_block)
+        mem_zero(self.scratch, BLOCK)
+        disk_write(new_block, self.scratch)
+        target_block = new_block
+        target_offset = 0
+      end
 
     disk_read(target_block, self.scratch)
     self:ent_write(target_offset, type, name, first, size)
     disk_write(target_block, self.scratch)
+
     return :true
   end,
 
-  dir_clear = fn(self, dir_first, name) do
+  fn dir_clear(self, dir_first, name) -> { type: num, first: num } | :nil do
     let block = dir_first
+
     while (block != 0 and block != END) do
       const next_block = self:fat_get(block)
+
       disk_read(block, self.scratch)
+
       for slot in 0..ENTS do
         const entry_offset = slot * 32
+
         if mem_read(self.scratch + entry_offset, 1) != 0 and self:ent_name(entry_offset) == name do
           const info = { type = mem_read(self.scratch + entry_offset, 1), first = mem_read(self.scratch + entry_offset + 2, 2) }
+
           mem_write(self.scratch + entry_offset, 0, 1)
           disk_write(block, self.scratch)
+
           return info
         end
       end
+
       block = next_block
     end
+
     return :nil
   end,
 
-  dir_empty = fn(self, dir_first) do
+  fn dir_empty(self, dir_first) -> bool do
     let block = dir_first
+
     while (block != 0 and block != END) do
       const next_block = self:fat_get(block)
+
       disk_read(block, self.scratch)
+
       for slot in 0..ENTS do
-        if mem_read(self.scratch + slot * 32, 1) != 0 return :false
+        if mem_read(self.scratch + slot * 32, 1) != 0 do
+          return :false
+        end
       end
+
       block = next_block
     end
+
     return :true
   end,
 
-  resolve = fn(self, path) do
+  # resolve a path to its entry
+  fn resolve(self, path) -> { type: num, first: num, size: num } | :nil do
     const parts = split_path(path)
     let current = self.root
     let entry = { type = T_DIR, first = self.root, size = 0 }
+
     for index in 0..parts:len() do
-      if entry.type != T_DIR return :nil
+      if entry.type != T_DIR do
+        return :nil
+      end
+
       const found = self:dir_lookup(current, parts[index])
-      if found == :nil return :nil
+
+      if found == :nil do
+        return :nil
+      end
+
       entry = found
       current = found.first
     end
+
     return entry
   end,
 
-  resolve_parent = fn(self, path) do
+  # resolve a path to its parent dir and name
+  fn resolve_parent(self, path) -> { dir: num, name: string } | :nil do
     const parts = split_path(path)
-    if parts:len() == 0 return :nil
+
+    if parts:len() == 0 do
+      return :nil
+    end
+
     let parent_dir = self.root
+
     for index in 0..(parts:len() - 1) do
       const found = self:dir_lookup(parent_dir, parts[index])
-      if found == :nil or found.type != T_DIR return :nil
+
+      if found == :nil or found.type != T_DIR do
+        return :nil
+      end
+
       parent_dir = found.first
     end
+
     return { dir = parent_dir, name = parts[parts:len() - 1] }
   end,
 
-  mount = fn(self) do
+  fn mount(self) do
     self.scratch = frame_alloc()
     self.fat = frame_alloc()
     self.total = disk_sectors()
-    if self.total == 0 do self.ready = :false return :nil end
+
+    if self.total == 0 do
+      self.ready = :false
+      return :nil
+    end
+
     disk_read(SB_LBA, self.scratch)
+
     if mem_read(self.scratch, 4) == MAGIC do
       self.root = mem_read(self.scratch + 8, 2)
       self.ready = :true
+    end else do
+      self.ready = :false
     end
-    else do self.ready = :false end
   end,
 
-  ensure = fn(self) do
-    if self.ready return :true
+  fn ensure(self) -> bool do
+    if self.ready do
+      return :true
+    end
+
     puts("no filesystem, run mkfs first\n")
-    :false
+
+    return :false
   end,
 
-  format = fn(self) do
-    if disk_sectors() == 0 do puts("mkfs: no disk\n") return :nil end
+  fn format(self) do
+    if disk_sectors() == 0 do
+      puts("mkfs: no disk\n")
+      return :nil
+    end
+
     mem_zero(self.scratch, BLOCK)
-    for sector in 0..FAT_SECTORS do disk_write(FAT_LBA + sector, self.scratch) end
+
+    for sector in 0..FAT_SECTORS do
+      disk_write(FAT_LBA + sector, self.scratch)
+    end
+
     const root = self:fat_alloc()
+
     self:fat_set(root, END)
     mem_zero(self.scratch, BLOCK)
     disk_write(root, self.scratch)
@@ -243,31 +352,70 @@ global fs = {
     mem_write(self.scratch + 8, root, 2)
     disk_write(SB_LBA, self.scratch)
     self.ready = :true
+
     puts("formatted #{self.total} sectors, #{(self.total shr 1)} KiB\n")
   end,
 
-  mkdir = fn(self, path) do
-    if self:ensure() == :false return :nil
+  fn mkdir(self, path) do
+    if self:ensure() == :false do
+      return :nil
+    end
+
     const parent = self:resolve_parent(path)
-    if parent == :nil do fail("mkdir: #{path}: bad path\n") return :nil end
-    if parent.name:len() > NAME_MAX do puts("name too long (max #{NAME_MAX})\n") return :nil end
-    if self:dir_lookup(parent.dir, parent.name) != :nil do fail("mkdir: #{parent.name}: already exists\n") return :nil end
+
+    if parent == :nil do
+      fail("mkdir: #{path}: bad path\n")
+      return :nil
+    end
+
+    if parent.name:len() > NAME_MAX do
+      fail("name too long (max #{NAME_MAX})\n")
+      return :nil
+    end
+
+    if self:dir_lookup(parent.dir, parent.name) != :nil do
+      fail("mkdir: #{parent.name}: already exists\n")
+      return :nil
+    end
+
     const new_block = self:fat_alloc()
-    if new_block == 0 do fail("disk full\n") return :nil end
+
+    if new_block == 0 do
+      fail("disk full\n")
+      return :nil
+    end
+
     self:fat_set(new_block, END)
     mem_zero(self.scratch, BLOCK)
     disk_write(new_block, self.scratch)
     self:dir_set(parent.dir, parent.name, T_DIR, new_block, 0)
   end,
 
-  store = fn(self, path, text) do
-    if self:ensure() == :false return 0
+  fn store(self, path, text) -> num do
+    if self:ensure() == :false do
+      return 0
+    end
+
     const parent = self:resolve_parent(path)
-    if parent == :nil do puts("#{path}: bad path\n") return 0 end
-    if parent.name:len() > NAME_MAX do puts("name too long (max #{NAME_MAX})\n") return 0 end
+
+    if parent == :nil do
+      puts("#{path}: bad path\n")
+      return 0
+    end
+
+    if parent.name:len() > NAME_MAX do
+      puts("name too long (max #{NAME_MAX})\n")
+      return 0
+    end
+
     const existing = self:dir_lookup(parent.dir, parent.name)
+
     if existing != :nil do
-      if existing.type == T_DIR do fail("#{parent.name}: is a directory\n") return 0 end
+      if existing.type == T_DIR do
+        fail("#{parent.name}: is a directory\n")
+        return 0
+      end
+
       self:free_chain(existing.first)
     end
 
@@ -275,185 +423,318 @@ global fs = {
     let first = 0
     let previous = 0
     let written = 0
-    while written < size do
+
+    while (written < size) do
       const block = self:fat_alloc()
-      if block == 0 do fail("disk full\n") return 0 end
+
+      if block == 0 do
+        fail("disk full\n")
+        return 0
+      end
+
       self:fat_set(block, END)
-      if first == 0 do first = block end
-      else do self:fat_set(previous, block) end
+
+      if first == 0 do
+        first = block
+      end else do
+        self:fat_set(previous, block)
+      end
+
       mem_zero(self.scratch, BLOCK)
       # blit a whole block of the string at once, per byte was O(n^2) and choked
       # the second files got into the kilobytes
       let chunk = size - written
-      if chunk > BLOCK do chunk = BLOCK end
+
+      if (chunk > BLOCK) chunk = BLOCK
+
       blit_str(self.scratch, text[written..(written + chunk)])
       disk_write(block, self.scratch)
       written += chunk
       previous = block
     end
+
     self:dir_set(parent.dir, parent.name, T_FILE, first, size)
+
     return 1
   end,
 
-  write = fn(self, path, text) do
-    if self:store(path, text) == 1 puts("wrote #{path} (#{text:len()} bytes)\n")
+  fn write(self, path, text) do
+    if (self:store(path, text) == 1) puts("wrote #{path} (#{text:len()} bytes)\n")
   end,
 
-  size = fn(self, path) do
+  fn size(self, path) -> num do
     const entry = self:resolve(path)
-    if entry == :nil or entry.type == T_DIR return -1
+
+    if entry == :nil or entry.type == T_DIR do
+      return -1
+    end
+
     return entry.size
   end,
 
-  read_bytes = fn(self, path, offset, length) do
+  fn read_bytes(self, path, offset, length) -> string do
     const entry = self:resolve(path)
-    if entry == :nil or entry.type == T_DIR return ""
+
+    if entry == :nil or entry.type == T_DIR do
+      return ""
+    end
+
     let block = entry.first
     let stop = offset + length
-    if stop > entry.size do stop = entry.size end
+
+    if (stop > entry.size) stop = entry.size
+
     let position = 0
     let result = ""
+
     while (block != 0 and block != END and position < stop) do
       const next_block = self:fat_get(block)
-      if (position + BLOCK > offset and position < stop) do
+
+      if position + BLOCK > offset and position < stop do
         disk_read(block, self.scratch)
         # pull this blocks slice in one go, per byte concat was O(n^2)
         let from = 0
-        if offset > position do from = offset - position end
+
+        if (offset > position) from = offset - position
+
         let to = BLOCK
-        if stop - position < BLOCK do to = stop - position end
+
+        if (stop - position < BLOCK) to = stop - position
+
         result = result ~ phys_to_str(self.scratch + from, to - from)
       end
+
       position += BLOCK
       block = next_block
     end
+
     return result
   end,
 
-  read_into = fn(self, path, dest) do
+  fn read_into(self, path, dest) -> num do
     const entry = self:resolve(path)
-    if entry == :nil or entry.type == T_DIR return 0
+
+    if entry == :nil or entry.type == T_DIR do
+      return 0
+    end
+
     let block = entry.first
     let offset = 0
     let remaining = entry.size
+
     while (block != 0 and block != END and remaining > 0) do
       const next_block = self:fat_get(block)
+
       disk_read(block, dest + offset)
       offset += BLOCK
       remaining -= BLOCK
       block = next_block
     end
+
     return entry.size
   end,
 
   # TODO: ts needs a rewrite its not cheap and rewrites every file from scratch
-  write_at = fn(self, path, offset, bytes) do
+  fn write_at(self, path, offset, bytes) -> num do
     const size = self:size(path)
     let base = ""
+
     if size > 0 do base = self:read_bytes(path, 0, size) end
+
     let prefix = ""
-    if offset <= base:len() do prefix = base[0..offset] end
-    else do
+
+    if offset <= base:len() do
+      prefix = base[0..offset]
+    end else do
       prefix = base
-      while prefix:len() < offset do prefix = prefix ~ string.of_ascii(0) end
+      while (prefix:len() < offset) do prefix = prefix ~ string.of_ascii(0) end
     end
+
     const after = offset + bytes:len()
     let tail = ""
+
     if after < base:len() do tail = base[after..] end
+
     return self:store(path, prefix ~ bytes ~ tail)
   end,
 
-  cat = fn(self, path) do
-    if self:ensure() == :false return :nil
+  fn cat(self, path) do
+    if self:ensure() == :false do
+      return :nil
+    end
+
     const entry = self:resolve(path)
-    if entry == :nil do fail("cat: #{path}: no such file\n") return :nil end
-    if entry.type == T_DIR do fail("cat: #{path}: is a directory\n") return :nil end
+
+    if entry == :nil do
+      fail("cat: #{path}: no such file\n")
+      return :nil
+    end
+
+    if entry.type == T_DIR do
+      fail("cat: #{path}: is a directory\n")
+      return :nil
+    end
+
     let block = entry.first
     let remaining = entry.size
     let result = ""
+
     while (block != 0 and block != END and remaining > 0) do
       const next_block = self:fat_get(block)
+
       disk_read(block, self.scratch)
-      const chunk = if remaining > BLOCK BLOCK else remaining
-      for index in 0..chunk do result = result ~ string.of_ascii(mem_read(self.scratch + index, 1)) end
+
+      const chunk = if (remaining > BLOCK) BLOCK else remaining
+
+      for index in 0..chunk do
+        result = result ~ string.of_ascii(mem_read(self.scratch + index, 1))
+      end
+
       remaining -= chunk
       block = next_block
     end
+
     puts(result)
     puts("\n")
   end,
 
-  ls = fn(self, path) do
-    if self:ensure() == :false return -1
+  fn ls(self, path) -> num do
+    if self:ensure() == :false do
+      return -1
+    end
+
     const entry = self:resolve(path)
-    if entry == :nil do fail("ls: #{path}: no such file\n") return -1 end
-    if entry.type != T_DIR do puts("  #{path}  #{entry.size} bytes\n") return -1 end
+
+    if entry == :nil do
+      fail("ls: #{path}: no such file\n")
+      return -1
+    end
+
+    if entry.type != T_DIR do
+      puts("  #{path}  #{entry.size} bytes\n")
+      return -1
+    end
+
     let count = 0
     let block = entry.first
+
     while (block != 0 and block != END) do
       const next_block = self:fat_get(block)
+
       disk_read(block, self.scratch)
+
       for slot in 0..ENTS do
         const entry_offset = slot * 32
         const entry_type = mem_read(self.scratch + entry_offset, 1)
+
         if entry_type != 0 do
           const name = self:ent_name(entry_offset)
-          if entry_type == T_DIR do puts("  #{name}/\n") end
-          else do puts("  #{name}  #{mem_read(self.scratch + entry_offset + 4, 4)} bytes\n") end
+
+          if entry_type == T_DIR do
+            puts("  #{name}/\n")
+          end else do
+            puts("  #{name}  #{mem_read(self.scratch + entry_offset + 4, 4)} bytes\n")
+          end
+
           count += 1
         end
       end
+
       block = next_block
     end
+
     return count
   end,
 
-  rm = fn(self, path) do
-    if self:ensure() == :false return :nil
+  fn rm(self, path) do
+    if self:ensure() == :false do
+      return :nil
+    end
+
     const parent = self:resolve_parent(path)
-    if parent == :nil do fail("rm: #{path}: no such file\n") return :nil end
+
+    if parent == :nil do
+      fail("rm: #{path}: no such file\n")
+      return :nil
+    end
+
     const entry = self:dir_lookup(parent.dir, parent.name)
-    if entry == :nil do fail("rm: #{path}: no such file\n") return :nil end
+
+    if entry == :nil do
+      fail("rm: #{path}: no such file\n")
+      return :nil
+    end
+
     if entry.type == T_DIR and self:dir_empty(entry.first) == :false do
       fail("rm: #{parent.name}: directory not empty\n")
       return :nil
     end
+
     self:free_chain(entry.first)
     self:dir_clear(parent.dir, parent.name)
     puts("removed #{parent.name}\n")
   end,
 
-  is_dir = fn(self, path) do
+  fn is_dir(self, path) -> bool do
     const entry = self:resolve(path)
+
     return entry != :nil and entry.type == T_DIR
   end,
 
-  entries = fn(self, path) do
+  fn entries(self, path) -> table | :nil do
     const entry = self:resolve(path)
-    if entry == :nil or entry.type != T_DIR return :nil
+
+    if entry == :nil or entry.type != T_DIR do
+      return :nil
+    end
+
     let result = {}
     let block = entry.first
+
     while (block != 0 and block != END) do
       const next_block = self:fat_get(block)
+
       disk_read(block, self.scratch)
+
       for slot in 0..ENTS do
         const entry_offset = slot * 32
         const entry_type = mem_read(self.scratch + entry_offset, 1)
-        if entry_type != 0 result:push({ name = self:ent_name(entry_offset), type = entry_type, size = mem_read(self.scratch + entry_offset + 4, 4) })
+
+        if entry_type != 0 do
+          result:push({
+            name = self:ent_name(entry_offset),
+            type = entry_type,
+            size = mem_read(self.scratch + entry_offset + 4, 4),
+          })
+        end
       end
+
       block = next_block
     end
+
     return result
   end,
 
-  unlink = fn(self, path) do
+  fn unlink(self, path) -> bool do
     const parent = self:resolve_parent(path)
-    if parent == :nil return :false
+
+    if parent == :nil do
+      return :false
+    end
+
     const entry = self:dir_lookup(parent.dir, parent.name)
-    if entry == :nil return :false
-    if (entry.type == T_DIR and self:dir_empty(entry.first) == :false) return :false
+
+    if entry == :nil do
+      return :false
+    end
+
+    if entry.type == T_DIR and self:dir_empty(entry.first) == :false do
+      return :false
+    end
+
     self:free_chain(entry.first)
     self:dir_clear(parent.dir, parent.name)
+
     return :true
   end,
 }

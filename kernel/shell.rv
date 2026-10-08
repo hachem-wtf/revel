@@ -1,21 +1,31 @@
 # i eventually want the shell to be a standalone program and shit
 
-fn pad(text, width) do
+fn pad(text, width) -> string do
   let result = text
-  while result:len() < width do result = result ~ " " end
+
+  while (result:len() < width)
+    result = result ~ " "
+
   return result
 end
 
 fn help_row(label, description) do
   let col = pad(label, 22)
-  if label:len() >= 22 do col = label ~ "  " end
+
+  if label:len() >= 22 do
+    col = label ~ "  "
+  end
+
   puts("    #{col}#{description}\n")
 end
 
 fn help_group(title, group_name) do
   puts("\n  #{title}\n")
+
   for index in 0..commands:len() do
-    if commands[index].group == group_name do help_row(commands[index].usage, commands[index].help) end
+    if commands[index].group == group_name do
+      help_row(commands[index].usage, commands[index].help)
+    end
   end
 end
 
@@ -44,12 +54,17 @@ fn cmd_help(context) do
     puts("\n  fonts on disk (font load /usr/share/x.psf)\n")
     for index in 0..font_files:len() do help_row(font_files[index].name, "") end
   end
+
   puts("\n")
 end
 
 fn welcome() do
   let fs_status = "no filesystem"
-  if fs.ready do fs_status = "revelfs mounted" end
+
+  if fs.ready do
+    fs_status = "revelfs mounted"
+  end
+
   puts("\n")
   puts("   kernel written in revo - by an alcoholic\n")
   puts("   #{(mem_total() shr 20)} MiB ram | #{fs_status} | #{prog_count()} programs\n")
@@ -58,288 +73,533 @@ fn welcome() do
 end
 
 # global so /bin scripts can call it from a nested eval fiber
-global arg_name = fn(line, start) do
+global arg_name = fn(line, start) -> { name: string, rest: num } do
   let quoted = :false
   let begin = start
-  if (begin < line:len() and line[begin] == "\"") do begin += 1 quoted = :true end
+
+  if begin < line:len() and line[begin] == "\"" do
+    begin += 1
+    quoted = :true
+  end
+
   let index = begin
+
   if quoted do
-    while (index < line:len() and line[index] != "\"") do index += 1 end
+    while (index < line:len() and line[index] != "\"")
+      index += 1
+  end else do
+    while (index < line:len() and line[index] != " ")
+      index += 1
   end
-  else do
-    while (index < line:len() and line[index] != " ") do index += 1 end
-  end
+
   const name = line[begin..index]
   let rest = index
-  if (quoted and rest < line:len()) do rest += 1 end
-  if (rest < line:len() and line[rest] == " ") do rest += 1 end
-  { name = name, rest = rest }
+
+  if quoted and rest < line:len() do
+    rest += 1
+  end
+
+  if rest < line:len() and line[rest] == " " do
+    rest += 1
+  end
+
+  return { name = name, rest = rest }
 end
 
-fn parent_of(path) do
-  if path == "/" return "/"
+fn parent_of(path) -> string do
+  if path == "/" do
+    return "/"
+  end
+
   let index = path:len() - 1
-  while (index > 0 and path[index] != "/") do index -= 1 end
-  if index == 0 return "/"
+
+  while (index > 0 and path[index] != "/")
+    index -= 1
+
+  if index == 0 do
+    return "/"
+  end
+
   return path[0..index]
 end
 
 fn cmd_cd(context) do
-  const arg = if context.argv:len() > 1 context.argv[1] else "/"
-  const target = if arg == ".." parent_of(wd.path) else expand_path(arg)
-  if target == "/proc" or target == "/bin" or fs:is_dir(target) do wd.path = target end
-  else do puts("cd: #{arg}: not a directory\n") shell_status.code = 1 end
+  const arg = if (context.argv:len() > 1) context.argv[1] else "/"
+
+  const target = if (arg == "..") parent_of(wd.path) else expand_path(arg)
+
+  if target == "/proc"
+      or target == "/bin"
+      or fs:is_dir(target) do
+    wd.path = target
+  end else do
+    fail("cd: #{arg}: not a directory\n")
+  end
 end
 
-fn cmd_pwd(context) puts("#{wd.path}\n")
+fn cmd_pwd(context)
+  puts("#{wd.path}\n")
 
-fn wipe() console:clear()
-fn cmd_clear(context) wipe()
+fn wipe()
+  console:clear()
+
+fn cmd_clear(context)
+  wipe()
 
 fn zoom_by(delta) do
   const entry = console.font_entry
+
   # ttf is vector, stepping the size interactively is fine
-  if (entry != :nil and entry.kind == :ttf) do
+  if entry != :nil and entry.kind == :ttf do
     let size = entry.size + delta * 4
-    if size < 8 do size = 8 end
-    if size > 72 do size = 72 end
-    if size == entry.size do puts("zoom #{size}px\n") return :nil end
+
+    if (size < 8) size = 8
+    if (size > 72) size = 72
+
+    if size == entry.size do
+      puts("zoom #{size}px\n")
+      return :nil
+    end
+
     const face = load_ttf(entry.path, size)
-    if face == :nil do puts("zoom: rasterize failed\n") return :nil end
+
+    if face == :nil do
+      puts("zoom: rasterize failed\n")
+      return :nil
+    end
+
     add_font(entry.name, face.glyphs, face.width, face.height, :ttf, entry.path, size)
     console:set_font(find_font(entry.name))
     puts("zoom #{size}px\n")
+
     return :nil
   end
+
   # bitmap fonts js use integer pixel scale
   let scale = console.scale + delta
-  if scale < 1 do scale = 1 end
-  if scale > 6 do scale = 6 end
+
+  if (scale < 1) scale = 1
+  if (scale > 6) scale = 6
+
   console.scale = scale
   wipe()
+
   puts("zoom #{scale}x\n")
 end
 
 fn cmd_zoom(context) do
-  const direction = if context.argv:len() > 1 context.argv[1] else ""
-  if direction == "in" do zoom_by(1) end
-  else if direction == "out" do zoom_by(-1) end
-  else do puts("usage: zoom in | zoom out\n") end
+  const direction =
+    if (context.argv:len() > 1)
+      context.argv[1]
+    else ""
+
+  match direction
+  | "in" => zoom_by(1)
+  | "out" => zoom_by(-1)
+  | _ => puts("usage: zoom in | zoom out\n")
 end
 
-fn font_basename(path) do
+fn font_basename(path) -> string do
   let start = 0
   let index = 0
-  while index < path:len() do
-    if path[index] == "/" do start = index + 1 end
+
+  while (index < path:len()) do
+    if path[index] == "/" do
+      start = index + 1
+    end
+
     index += 1
   end
+
   let name = path[start..]
   let dot = -1
-  for i in 0..name:len() do if name[i] == "." do dot = i end end
-  if dot > 0 do name = name[0..dot] end
+
+  for i in 0..name:len() do
+    if (name[i] == ".")
+      dot = i
+  end
+
+  if (dot > 0)
+    name = name[0..dot]
+
   return name
 end
 
-fn load_psf(path) do
+fn load_psf(path) -> { glyphs: table, width: num, height: num } | :nil do
   const size = fs:size(path)
-  if size < 4 return :nil
+
+  if size < 4 do
+    return :nil
+  end
+
   const data = fs:read_bytes(path, 0, size)
-  if (data[0]:ascii() != 0x36 or data[1]:ascii() != 0x04) do return :nil end
+
+  if data[0]:ascii() != 0x36 or data[1]:ascii() != 0x04 do
+    return :nil
+  end
+
   const height = data[3]:ascii()
-  if (height == 0 or size < 4 + 128 * height) do return :nil end
+
+  if height == 0 or size < 4 + 128 * height do
+    return :nil
+  end
+
   let glyphs = {}
+
   for code in 32..128 do
     const base = 4 + code * height
     let rows = {}
-    for row in 0..height do rows:push(reverse8(data[base + row]:ascii())) end
+
+    for row in 0..height do
+      rows:push(reverse8(data[base + row]:ascii()))
+    end
+
     glyphs:push(rows)
   end
+
   return { glyphs = glyphs, width = 8, height = height }
 end
 
-fn has_slash(text) do
-  for index in 0..text:len() do if text[index] == "/" return :true end
+fn has_slash(text) -> bool do
+  for index in 0..text:len() do
+    if (text[index] == "/")
+      return :true
+  end
+
   return :false
 end
 
-fn ends_with(text, suffix) do
-  if text:len() < suffix:len() return :false
+fn ends_with(text, suffix) -> bool do
+  if text:len() < suffix:len() do
+    return :false
+  end
+
   return text[(text:len() - suffix:len())..] == suffix
 end
 
-fn str_to_int(text) do
+fn str_to_int(text) -> num do
   let value = 0
+
   for index in 0..text:len() do
     const code = text[index]:ascii()
-    if (code >= 48 and code <= 57) do value = value * 10 + (code - 48) end
+
+    if code >= 48 and code <= 57 do
+      value = value * 10 + (code - 48)
+    end
   end
+
   return value
 end
 
-fn font_file(name) do
-  if has_slash(name) do
-    const p = expand_path(name)
-    if (ends_with(p, ".ttf") and fs:size(p) >= 0) return { path = p, kind = :ttf }
-    if (ends_with(p, ".psf") and fs:size(p) >= 0) return { path = p, kind = :psf }
-    if fs:size(p ~ ".ttf") >= 0 return { path = p ~ ".ttf", kind = :ttf }
-    if fs:size(p ~ ".psf") >= 0 return { path = p ~ ".psf", kind = :psf }
-    return { path = p, kind = :none }
-  end
-  if fs:size("/usr/share/#{name}.psf") >= 0 return { path = "/usr/share/#{name}.psf", kind = :psf }
-  if fs:size("/usr/share/#{name}.ttf") >= 0 return { path = "/usr/share/#{name}.ttf", kind = :ttf }
-  return { path = name, kind = :none }
+#* resolve a font name to a path and a kind *#
+fn font_file(name) -> { path: string, kind: ( :ttf | :psf | :none ) } do
+  return match
+  | has_slash(name) => do
+      const p = expand_path(name)
+
+      if ends_with(p, ".ttf") and fs:size(p) >= 0 do
+        return { path = p, kind = :ttf }
+      end
+
+      if ends_with(p, ".psf") and fs:size(p) >= 0 do
+        return { path = p, kind = :psf }
+      end
+
+      if fs:size(p ~ ".ttf") >= 0 do
+        return { path = p ~ ".ttf", kind = :ttf }
+      end
+
+      if fs:size(p ~ ".psf") >= 0 do
+        return { path = p ~ ".psf", kind = :psf }
+      end
+
+      return { path = p, kind = :none }
+    end
+  | fs:size("/usr/share/#{name}.psf") >= 0 => { path = "/usr/share/#{name}.psf", kind = :psf }
+  | fs:size("/usr/share/#{name}.ttf") >= 0 => { path = "/usr/share/#{name}.ttf", kind = :ttf }
+  | _ => { path = name, kind = :none }
 end
 
 fn cmd_font(context) do
   if context.argv:len() < 2 do
     puts("fonts:")
-    for index in 0..fonts:len() do puts(" #{fonts[index].name}(#{fonts[index].width}x#{fonts[index].height})") end
+
+    for index in 0..fonts:len() do
+      puts(" #{fonts[index].name}(#{fonts[index].width}x#{fonts[index].height})")
+    end
+
     puts("\n")
     const font_files = fs:entries("/usr/share")
     if font_files != :nil do
       puts("on disk:")
-      for index in 0..font_files:len() do puts(" #{font_files[index].name}") end
+
+      for index in 0..font_files:len() do
+        puts(" #{font_files[index].name}")
+      end
+
       puts("\n")
     end
+
     return :nil
   end
+
   # `font load <path> [size]` still works, but a bare name/path is the same thing
   let name = context.argv[1]
   let arg_at = 1
+
   if name == "load" do
-    if context.argv:len() < 3 do puts("usage: font load <path> [size]\n") return :nil end
+    if context.argv:len() < 3 do
+      puts("usage: font load <path> [size]\n")
+      return :nil
+    end
+
     name = context.argv[2]
     arg_at = 2
   end
+
   # an explicit size (ttf only) forces a fresh rasterize. without one we just
   # switch to whatever is already in the registry under that name
   let size = 0
-  if context.argv:len() > arg_at + 1 do size = str_to_int(context.argv[arg_at + 1]) end
+
+  if context.argv:len() > arg_at + 1 do
+    size = str_to_int(context.argv[arg_at + 1])
+  end
+
   if size == 0 do
     const existing = find_font(name)
-    if existing != :nil do console:set_font(existing) return :nil end
+
+    if existing != :nil do
+      console:set_font(existing)
+      return :nil
+    end
   end
+
   const info = font_file(name)
-  if info.kind == :none do puts("font: #{name}: no such font\n") return :nil end
-  const reg_name = font_basename(info.path)
-  if info.kind == :psf do
-    const prior = find_font(reg_name)
-    if prior != :nil do console:set_font(prior) return :nil end
-    const parsed = load_psf(info.path)
-    if parsed == :nil do puts("font: #{name}: not a psf font\n") return :nil end
-    add_font(reg_name, parsed.glyphs, parsed.width, parsed.height, :bitmap, :nil, 0)
-    console:set_font(find_font(reg_name))
+
+  if info.kind == :none do
+    puts("font: #{name}: no such font\n")
     return :nil
   end
+
+  const reg_name = font_basename(info.path)
+
+  if info.kind == :psf do
+    const prior = find_font(reg_name)
+
+    if prior != :nil do
+      console:set_font(prior)
+      return :nil
+    end
+
+    const parsed = load_psf(info.path)
+
+    if parsed == :nil do
+      puts("font: #{name}: not a psf font\n")
+      return :nil
+    end
+
+    add_font(reg_name, parsed.glyphs, parsed.width, parsed.height, :bitmap, :nil, 0)
+    console:set_font(find_font(reg_name))
+
+    return :nil
+  end
+
   # ttf: rasterize ascii at the requested size (default 18)
-  if size == 0 do size = 18 end
+  if size == 0 do
+    size = 18
+  end
+
   const face = load_ttf(info.path, size)
-  if face == :nil do puts("font: #{name}: bad ttf\n") return :nil end
+
+  if face == :nil do
+    puts("font: #{name}: bad ttf\n")
+    return :nil
+  end
+
   add_font(reg_name, face.glyphs, face.width, face.height, :ttf, info.path, size)
   console:set_font(find_font(reg_name))
 end
 
-fn bcd(byte) (byte shr 4) * 10 + (byte band 15)
-fn rtc(cmos_reg) do
-  outb(0x70, cmos_reg)
-  inb(0x71)
+fn bcd(byte) -> num do
+  return (byte shr 4) * 10 + (byte band 15)
 end
-fn cmd_time(context) puts("utc #{bcd(rtc(4))}:#{bcd(rtc(2))}:#{bcd(rtc(0))}\n")
 
-# 0x prefixed 16 digit hex
-fn hex(value) do
+fn rtc(cmos_reg) -> num do
+  outb(0x70, cmos_reg)
+  return inb(0x71)
+end
+
+fn cmd_time(context) do
+  const hour = 4 |> rtc |> bcd
+  const min = 2 |> rtc |> bcd
+  const sec = 0 |> rtc |> bcd
+
+  puts("utc #{hour}:#{min}:#{sec}\n")
+end
+
+#* 0x prefixed 16 digit hex *#
+fn hex(value) -> string do
   const digits = "0123456789abcdef"
   let result = ""
-  for index in 0..16 do result = result ~ digits[(value shr ((15 - index) * 4)) band 15] end
-  "0x#{result}"
+
+  for index in 0..16 do
+    result = result ~ digits[(value shr ((15 - index) * 4)) band 15]
+  end
+
+  return "0x#{result}"
 end
 
-fn mem_type_name(kind) do
-  if kind == 0 return "usable"
-  if kind == 1 return "reserved"
-  if kind == 2 return "acpi-reclaimable"
-  if kind == 3 return "acpi-nvs"
-  if kind == 4 return "bad"
-  if kind == 5 return "bootloader-reclaimable"
-  if kind == 6 return "kernel+modules"
-  if kind == 7 return "framebuffer"
-  "unknown"
+fn mem_type_name(kind) -> string do
+  match kind
+  | 0 => "usable"
+  | 1 => "reserved"
+  | 2 => "acpi-reclaimable"
+  | 3 => "acpi-nvs"
+  | 4 => "bad"
+  | 5 => "bootloader-reclaimable"
+  | 6 => "kernel+modules"
+  | 7 => "framebuffer"
+  | _ => "unknown"
 end
 
-# the boot memory map dump
+#* the boot memory map dump *#
 fn dump_memmap() do
   puts("memory map:\n")
+
   for index in 0..memmap_count() do
     puts("  #{hex(memmap_base(index))} len=#{hex(memmap_len(index))} type=#{mem_type_name(memmap_kind(index))}\n")
   end
+
   puts("usable: #{(mem_total() shr 20)} MiB, free: #{(mem_free() shr 20)} MiB\n")
 end
 
-fn cmd_mem(context) puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB usable\n")
-fn cmd_uptime(context) puts("#{math.floor(uptime() / 100)}s (#{uptime()} ticks)\n")
-fn cmd_ps(context) puts("#{proc_count()} process(es) running\n")
-fn cmd_echo(context) do if context.line:len() > 5 puts("#{context.line[5..]}\n") else puts("\n") end
-fn cmd_mkfs(context) fs:format()
+fn cmd_mem(context)
+  puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB usable\n")
 
-fn exec_file(target) do
+fn cmd_uptime(context)
+  puts("#{math.floor(uptime() / 100)}s (#{uptime()} ticks)\n")
+
+fn cmd_ps(context)
+  puts("#{proc_count()} process(es) running\n")
+
+fn cmd_echo(context) do
+  if context.line:len() > 5 do
+    puts("#{context.line[5..]}\n")
+  end else do
+    puts("\n")
+  end
+end
+
+fn cmd_mkfs(context)
+  fs:format()
+
+#* resolve a command name to a path and a kind *#
+fn exec_file(target) -> { path: string, kind: ( :elf | :script | :none ) } do
   let candidates = {}
+
   if has_slash(target) do
     candidates:push(expand_path(target))
     candidates:push(expand_path(target) ~ ".rv")
-  end
-  else do
+  end else do
     candidates:push(expand_path(target))
     candidates:push(expand_path(target) ~ ".rv")
     candidates:push("/usr/bin/#{target}")
     candidates:push("/bin/#{target}.rv")
   end
+
   for index in 0..candidates:len() do
     const path = candidates[index]
+
     if fs:size(path) >= 0 do
       const head = fs:read_bytes(path, 0, 4)
-      if (head:len() >= 4 and head[0]:ascii() == 127 and head[1]:ascii() == 69 and head[2]:ascii() == 76 and head[3]:ascii() == 70) return { path = path, kind = :elf }
+
+      if head:len() >= 4
+          and head[0]:ascii() == 127
+          and head[1]:ascii() == 69
+          and head[2]:ascii() == 76
+          and head[3]:ascii() == 70 do
+        return { path = path, kind = :elf }
+      end
+
       return { path = path, kind = :script }
     end
   end
+
   return { path = target, kind = :none }
 end
 
 fn cmd_run(context) do
-  if context.argv:len() <= 1 do list_progs() return :nil end
-  const target = context.argv[1]
-  const info = exec_file(target)
-  if info.kind == :none do fail("run: #{target}: not found\n") return :nil end
-  const sub_argv = context.rest:split(" ")
-  const sub_ctx = make_ctx(context.rest, sub_argv)
-  if info.kind == :script do
-    run_script_path(info.path, target, sub_ctx)
+  if context.argv:len() <= 1 do
+    list_progs()
     return :nil
   end
-  if load_file_elf(info.path, sub_ctx.rest) == :true return :hold
+
+  const target = context.argv[1]
+  const info = exec_file(target)
+
+  if info.kind == :none do
+    fail("run: #{target}: not found\n")
+    return :nil
+  end
+
+  const sub_argv = context.rest:split(" ")
+  const sub_ctx = make_ctx(context.rest, sub_argv)
+
+  if info.kind == :script do
+    run_script_path(info.path, target, sub_ctx)
+
+    return :nil
+  end
+
+  if load_file_elf(info.path, sub_ctx.rest) == :true do
+    return :hold
+  end
+
   fail("run: #{target}: not executable\n")
+
   return :nil
 end
 
-fn run(line) do
+#* run one shell line *#
+fn run(line) -> :nil do
   # the fact that the shell needs to interface directly with ed isnt, very nice
   # this is a TODO btw
-  if gils_ed_active() do gils_ed_feed(line) return :nil end
-  if line:trim():len() == 0 do puts(prompt()) return :nil end
+  if gils_ed_active() do
+    gils_ed_feed(line)
+    return :nil
+  end
+
+  if line:trim():len() == 0 do
+    puts(prompt())
+    return :nil
+  end
+
   const argv = line:split(" ")
   const context = make_ctx(line, argv)
   shell_status.code = 0
   const command = lookup(argv[0])
+
   if command != :nil do
     # :hold means the command took over (modal editor / launched a program) so
     # we dont draw a fresh prompt, otherwise we do
     const result = command.handler(context)
-    if result != :hold do puts(prompt()) end
+
+    if result != :hold do
+      puts(prompt())
+    end
+
     return :nil
   end
 
-  if run_script(argv[0], context) == :true do puts(prompt()) return :nil end
-  if run_prog(argv[0], context.rest) == :true return :nil
+  if run_script(argv[0], context) == :true do
+    puts(prompt())
+    return :nil
+  end
+
+  if run_prog(argv[0], context.rest) == :true do
+    return :nil
+  end
+
   shell_status.code = 127
   puts("#{argv[0]}: command not found\n")
   puts(prompt())

@@ -137,7 +137,8 @@ global tty = {
     if byte == 27 do self.esc = 1 return :nil end    # ESC, start a sequence
 
     if byte == 10 do self:submit() return :nil end       # enter
-    if byte == 8 or byte == 127 do self:backspace() return :nil end # bs / del
+    if byte == 8 do self:backspace() return :nil end     # bs
+    if byte == 127 do self:erase_word() return :nil end  # del (ctrl-bs): erase word
     if byte == 1 do self:home() return :nil end          # ctrl-a
     if byte == 5 do self:to_end() return :nil end        # ctrl-e
     if byte == 3 do self:cancel() return :nil end        # ctrl-c
