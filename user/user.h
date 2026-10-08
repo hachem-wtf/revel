@@ -1,16 +1,44 @@
-// shared syscall stubs
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
 
-static long sys_write(const char* buffer, unsigned long length)
+#define O_WRONLY 1
+#define O_CREAT  0x40
+#define O_TRUNC  0x200
+#define O_APPEND 0x400
+
+static long sys_write(long fd, const char* buffer, unsigned long length)
 {
     long result;
-    __asm__ volatile("int $0x80" : "=a"(result) : "a"(1L), "D"(buffer), "S"(length) : "memory");
+    __asm__ volatile("int $0x80" : "=a"(result) : "a"(1L), "D"(fd), "S"(buffer), "d"(length) : "memory");
     return result;
 }
 
-static long sys_read(void)
+static long sys_read(long fd, char* buffer, unsigned long length)
 {
     long result;
-    __asm__ volatile("int $0x80" : "=a"(result) : "a"(2L) : "memory");
+    __asm__ volatile("int $0x80" : "=a"(result) : "a"(2L), "D"(fd), "S"(buffer), "d"(length) : "memory");
+    return result;
+}
+
+static long sys_open(const char* path, long flags)
+{
+    long result;
+    __asm__ volatile("int $0x80" : "=a"(result) : "a"(7L), "D"(path), "S"(flags) : "memory");
+    return result;
+}
+
+static long sys_close(long fd)
+{
+    long result;
+    __asm__ volatile("int $0x80" : "=a"(result) : "a"(8L), "D"(fd) : "memory");
+    return result;
+}
+
+static long sys_lseek(long fd, long offset, long whence)
+{
+    long result;
+    __asm__ volatile("int $0x80" : "=a"(result) : "a"(9L), "D"(fd), "S"(offset), "d"(whence) : "memory");
     return result;
 }
 
@@ -52,7 +80,15 @@ static void put(const char* string)
     unsigned long length = 0;
     while (string[length])
         length++;
-    sys_write(string, length);
+    sys_write(1, string, length);
+}
+
+static int get_char(void)
+{
+    char c;
+    if (sys_read(0, &c, 1) <= 0)
+        return -1;
+    return (unsigned char)c;
 }
 
 static int read_line(char* buffer, int max_length)
@@ -60,7 +96,9 @@ static int read_line(char* buffer, int max_length)
     int length = 0;
     for (;;)
     {
-        char character = (char)sys_read();
+        char character;
+        if (sys_read(0, &character, 1) <= 0)
+            break;
         if (character == '\n')
             break;
         if (character == '\b')
@@ -68,14 +106,14 @@ static int read_line(char* buffer, int max_length)
             if (length > 0)
             {
                 length--;
-                sys_write("\b \b", 3);
+                sys_write(1, "\b \b", 3);
             }
             continue;
         }
         if (length < max_length - 1)
         {
             buffer[length++] = character;
-            sys_write(&character, 1);
+            sys_write(1, &character, 1);
         }
     }
     buffer[length] = 0;
@@ -108,5 +146,5 @@ static void put_int(long value)
         buffer[right] = swap;
     }
 
-    sys_write(buffer, length);
+    sys_write(1, buffer, length);
 }

@@ -8,8 +8,17 @@ const regs = @import("regs.zig");
 const bridge = @import("bridge");
 const Frame = regs.Frame;
 
-// scratch for a filename copied out of the caller legit one static buffer is fine
-var name_buf: [64]u8 = undefined;
+// what a syscall returns in rax on failure
+const SYS_ERR: u64 = @bitCast(@as(i64, -1));
+
+// open() flags (linux values lmao)
+const O_CREAT: u64 = 0x40;
+const O_TRUNC: u64 = 0x200;
+const O_APPEND: u64 = 0x400;
+
+// scratch for a filename copied out of the caller
+// legit one static buffer is fine
+var name_buf: [128]u8 = undefined;
 fn userName(ptr: u64) []const u8 {
     const p: [*]const u8 = @ptrFromInt(ptr);
     var i: usize = 0;
@@ -62,63 +71,144 @@ export fn syscallStub() callconv(.naked) void {
 }
 
 export fn syscallHandler(frame: *SyscallFrame) callconv(.c) void {
+    // i js reorganized half of these so if anyone wrote code in asm
+    // for this (me), your syscalled are fucked
     switch (frame.rax) {
         0 => { // exit(code): code in rdi
             sched.exitCurrent();
             asm volatile ("sti");
             while (true) asm volatile ("hlt");
         },
-        1 => { // write(ptr, len): rdi = user pointer, rsi = length
-            const len = frame.rsi;
-            if (len > 0 and len <= 4096) {
-                const bytes: [*]const u8 = @ptrFromInt(frame.rdi);
-                serial.write(bytes[0..len]);
-            }
-            frame.rax = len; // syscall return value
+        1 => { // write(fd, ptr, len)
+            const len = frame.rdx;
+            if (sched.fdGet(@bitCast(frame.rdi))) |f| {
+                if (f.kind == .console) {
+                    if (len > 0 and len <= 4096) {
+                        const bytes: [*]const u8 = @ptrFromInt(frame.rsi);
+                        serial.write(bytes[0..len]);
+                    }
+                    frame.rax = len;
+                } else if (f.kind == .file) {
+                    const n = @min(len, 4096);
+                    const src: [*]const u8 = @ptrFromInt(frame.rsi);
+                    if (bridge.fsWriteAt(f.path[0..f.path_len], f.offset, src[0..n])) {
+                        f.offset += n;
+                        frame.rax = n;
+                    } else frame.rax = SYS_ERR;
+                } else {
+                    frame.rax = SYS_ERR; // keyboard isnt writable
+                }
+            } else frame.rax = SYS_ERR;
         },
-        2 => { // read(): return a buffered byte, else block for one
-            if (sched.readReady()) |byte| {
-                frame.rax = byte;
+        2 => { // read(fd, buf, count)
+            const count = frame.rdx;
+            const f = sched.fdGet(@bitCast(frame.rdi)) orelse {
+                frame.rax = SYS_ERR;
+                return;
+            };
+            switch (f.kind) {
+                .keyboard => {
+                    if (count == 0) {
+                        frame.rax = 0;
+                        return;
+                    }
+                    if (sched.readReady()) |byte| {
+                        const dst: [*]u8 = @ptrFromInt(frame.rsi);
+                        dst[0] = byte;
+                        frame.rax = 1;
+                        return;
+                    }
+                    // nothn buffered
+                    const resume_frame: Frame = .{
+                        .r15 = frame.r15,
+                        .r14 = frame.r14,
+                        .r13 = frame.r13,
+                        .r12 = frame.r12,
+                        .r11 = frame.r11,
+                        .r10 = frame.r10,
+                        .r9 = frame.r9,
+                        .r8 = frame.r8,
+                        .rbp = frame.rbp,
+                        .rdi = frame.rdi,
+                        .rsi = frame.rsi,
+                        .rdx = frame.rdx,
+                        .rcx = frame.rcx,
+                        .rbx = frame.rbx,
+                        .rax = frame.rax,
+                        .vector = 0,
+                        .error_code = 0,
+                        .rip = frame.rip - 2,
+                        .cs = frame.cs,
+                        .rflags = frame.rflags,
+                        .rsp = frame.rsp,
+                        .ss = frame.ss,
+                    };
+                    sched.blockCurrentOnRead(resume_frame);
+                    asm volatile ("sti");
+                    while (true) asm volatile ("hlt");
+                },
+                .file => {
+                    const n = @min(count, 4096);
+                    const dst: [*]u8 = @ptrFromInt(frame.rsi);
+                    const got = bridge.fsReadInto(f.path[0..f.path_len], f.offset, dst[0..n]);
+                    f.offset += got;
+                    frame.rax = got;
+                },
+                else => frame.rax = SYS_ERR,
+            }
+        },
+        7 => { // open(path_ptr, flags)
+            const name = userName(frame.rdi);
+            const flags = frame.rsi;
+            var size = bridge.fsSize(name);
+            if (size < 0) {
+                if (flags & O_CREAT != 0 and bridge.fsStore(name, "")) {
+                    size = 0;
+                } else {
+                    frame.rax = SYS_ERR;
+                    return;
+                }
+            } else if (flags & O_TRUNC != 0) {
+                _ = bridge.fsStore(name, "");
+                size = 0;
+            }
+            const fd = sched.fdOpen(name);
+            if (fd < 0) {
+                frame.rax = SYS_ERR;
                 return;
             }
-            const resume_frame: Frame = .{
-                .r15 = frame.r15,
-                .r14 = frame.r14,
-                .r13 = frame.r13,
-                .r12 = frame.r12,
-                .r11 = frame.r11,
-                .r10 = frame.r10,
-                .r9 = frame.r9,
-                .r8 = frame.r8,
-                .rbp = frame.rbp,
-                .rdi = frame.rdi,
-                .rsi = frame.rsi,
-                .rdx = frame.rdx,
-                .rcx = frame.rcx,
-                .rbx = frame.rbx,
-                .rax = frame.rax,
-                .vector = 0,
-                .error_code = 0,
-                .rip = frame.rip,
-                .cs = frame.cs,
-                .rflags = frame.rflags,
-                .rsp = frame.rsp,
-                .ss = frame.ss,
-            };
-            sched.blockCurrentOnRead(resume_frame);
-            asm volatile ("sti");
-            while (true) asm volatile ("hlt");
+            if (flags & O_APPEND != 0) {
+                if (sched.fdGet(fd)) |f| f.offset = @intCast(size);
+            }
+            frame.rax = @bitCast(fd);
         },
-        4 => { // fs_size(name_ptr): returns size (like obv), or -1
+        8 => { // close(fd)
+            frame.rax = @bitCast(sched.fdClose(@bitCast(frame.rdi)));
+        },
+        9 => { // lseek(fd, offset, whence)
+            if (sched.fdGet(@bitCast(frame.rdi))) |f| {
+                switch (frame.rdx) {
+                    0 => f.offset = frame.rsi, // SEEK_SET
+                    1 => f.offset += frame.rsi, // SEEK_CUR
+                    2 => { // SEEK_END
+                        const sz = bridge.fsSize(f.path[0..f.path_len]);
+                        if (sz >= 0) f.offset = @as(u64, @intCast(sz)) +% frame.rsi;
+                    },
+                    else => {},
+                }
+                frame.rax = f.offset;
+            } else frame.rax = SYS_ERR;
+        },
+        4 => { // fs_size(name_ptr)
             frame.rax = @bitCast(bridge.fsSize(userName(frame.rdi)));
         },
-        5 => { // fs_read(name_ptr, offset, buf_ptr, len): returns bytes read
+        5 => { // fs_read(name_ptr, offset, buf_ptr, len)
             const len = @min(frame.rcx, 4096);
             const name = userName(frame.rdi);
             const dst: [*]u8 = @ptrFromInt(frame.rdx);
             frame.rax = bridge.fsReadInto(name, frame.rsi, dst[0..len]);
         },
-        6 => { // fs_write(name_ptr, buf_ptr, len): returns 1 ok / 0 fail
+        6 => { // fs_write(name_ptr, buf_ptr, len)
             const len = @min(frame.rdx, 64 * 1024);
             const name = userName(frame.rdi);
             const src: [*]const u8 = @ptrFromInt(frame.rsi);

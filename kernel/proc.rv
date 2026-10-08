@@ -67,8 +67,8 @@ end
 
 fn run_prog(name, arg) do
   let bare_name = name
-  if bare_name:starts_with?("/bin/") bare_name = bare_name[5..]
-  const path = "/bin/#{bare_name}"
+  if bare_name:starts_with?("/usr/bin/") bare_name = bare_name[9..]
+  const path = "/usr/bin/#{bare_name}"
   if fs:size(path) < 0 return :false
   return load_file_elf(path, arg)
 end

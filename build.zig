@@ -67,6 +67,7 @@ pub fn build(b: *std.Build) void {
         .{ "k_console", "kernel/console.rv" },
         .{ "k_vmm", "kernel/vmm.rv" },
         .{ "k_fs", "kernel/fs.rv" },
+        .{ "k_io", "kernel/io.rv" },
         .{ "k_vfs", "kernel/vfs.rv" },
         .{ "k_seed", "kernel/seed.rv" },
         .{ "k_proc", "kernel/proc.rv" },
@@ -98,7 +99,7 @@ pub fn build(b: *std.Build) void {
         kernel.root_module.addAnonymousImport(e[0], .{ .root_source_file = b.path(e[1]) });
     }
 
-    inline for (.{ "hexview", "calc", "primes", "save" }) |prog| {
+    inline for (.{ "hexview", "calc", "primes", "save", "chat" }) |prog| {
         const cc = b.addSystemCommand(&.{
             "zig",                  "cc",
             "-target",              "x86_64-freestanding",
@@ -110,6 +111,8 @@ pub fn build(b: *std.Build) void {
         });
         const prog_elf = cc.addOutputFileArg(prog ++ ".elf");
         cc.addFileArg(b.path("user/" ++ prog ++ ".c"));
+        cc.addFileInput(b.path("user/user.h"));
+        cc.addFileInput(b.path("user/link.ld"));
         kernel.root_module.addAnonymousImport("user_" ++ prog, .{ .root_source_file = prog_elf });
     }
 

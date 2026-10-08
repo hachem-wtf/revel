@@ -16,9 +16,9 @@ if (disk_sectors() != 0 and fs.ready == :false) do
 end
 
 # lung will be happy
-const default_face = load_ttf("/fonts/terminess.ttf", 32)
+const default_face = load_ttf("/usr/share/terminess.ttf", 32)
 if default_face != :nil do
-  add_font("terminess", default_face.glyphs, default_face.width, default_face.height, :ttf, "/fonts/terminess.ttf", 32)
+  add_font("terminess", default_face.glyphs, default_face.width, default_face.height, :ttf, "/usr/share/terminess.ttf", 32)
   console:set_font(find_font("terminess"))
 end
 

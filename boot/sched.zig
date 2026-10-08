@@ -8,8 +8,19 @@ const bridge = @import("bridge");
 
 const MAX_TASKS = 8;
 const KSTACK_SIZE = 16 * 1024;
+const MAX_FDS = 8;
+const MAX_PATH = 128;
 
 const State = enum { free, ready, dead, blocked };
+
+// file descriptor not "foid decimator"
+pub const FdKind = enum { closed, keyboard, console, file };
+pub const Fd = struct {
+    kind: FdKind = .closed,
+    offset: u64 = 0,
+    path_len: usize = 0,
+    path: [MAX_PATH]u8 = @splat(0),
+};
 
 const Task = struct {
     frame: Frame = std.mem.zeroes(Frame),
@@ -20,6 +31,7 @@ const Task = struct {
 
 var tasks: [MAX_TASKS]Task = @splat(.{});
 var kstacks: [MAX_TASKS][KSTACK_SIZE]u8 align(16) = undefined;
+var fdtabs: [MAX_TASKS][MAX_FDS]Fd = @splat(@splat(.{}));
 var current: usize = 0;
 var blocked_reader: ?usize = null;
 
@@ -53,10 +65,10 @@ pub fn spawn(cr3: u64, entry: u64, ustack: u64, arg: u64, arglen: u64) void {
         var f = std.mem.zeroes(Frame);
         f.rip = entry;
         f.cs = 0x1b; // user code (0x18) | rpl 3
-        f.rflags = 0x202; // reserved bit + if=1, so its preemptible
+        f.rflags = 0x202; // reserved bit + if=1 so its preemptible
         f.rsp = ustack;
         f.ss = 0x23; // user data (0x20) | rpl 3
-        f.rdi = arg; // _start(arg_ptr, arg_len), the sysv first two args
+        f.rdi = arg; // _start(arg_ptr, arg_len) the sysv first two args
         f.rsi = arglen;
         tasks[i] = .{
             .frame = f,
@@ -64,8 +76,49 @@ pub fn spawn(cr3: u64, entry: u64, ustack: u64, arg: u64, arglen: u64) void {
             .kstack_top = @intFromPtr(&kstacks[i]) + KSTACK_SIZE,
             .state = .ready,
         };
+        initFds(i);
         return;
     }
+}
+
+// stdin at keyboard
+fn initFds(i: usize) void {
+    for (&fdtabs[i]) |*f| f.* = .{};
+    fdtabs[i][0].kind = .keyboard;
+    fdtabs[i][1].kind = .console;
+    fdtabs[i][2].kind = .console;
+}
+
+// foid decimator open
+pub fn fdOpen(path: []const u8) i64 {
+    var i: usize = 3;
+    while (i < MAX_FDS) : (i += 1) {
+        const f = &fdtabs[current][i];
+        if (f.kind == .closed) {
+            f.kind = .file;
+            f.offset = 0;
+            const n = @min(path.len, MAX_PATH);
+            @memcpy(f.path[0..n], path[0..n]);
+            f.path_len = n;
+            return @intCast(i);
+        }
+    }
+    return -1;
+}
+
+// foid decimator get
+pub fn fdGet(fd: i64) ?*Fd {
+    if (fd < 0 or fd >= MAX_FDS) return null;
+    const f = &fdtabs[current][@intCast(fd)];
+    if (f.kind == .closed) return null;
+    return f;
+}
+
+// foid decimator close
+pub fn fdClose(fd: i64) i64 {
+    const f = fdGet(fd) orelse return -1;
+    f.kind = .closed;
+    return 0;
 }
 
 pub fn procCount() u64 {
@@ -122,7 +175,7 @@ pub fn blockCurrentOnRead(resume_frame: Frame) void {
 
 pub fn deliverInput(byte: u8) bool {
     if (blocked_reader) |task| {
-        tasks[task].frame.rax = byte;
+        stdinPush(byte);
         tasks[task].state = .ready;
         blocked_reader = null;
         return true;

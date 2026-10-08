@@ -22,26 +22,26 @@ end
 fn cmd_help(context) do
   help_group("shell", "shell")
   help_group("gils (builtin)", "gils")
-  # the rest of gils, and the programs, are real files in /bin now
-  const items = fs:entries("/bin")
-  if items != :nil do
+  # gils scripts are real files in /bin, native programs in /usr/bin
+  const scripts = fs:entries("/bin")
+  if scripts != :nil do
     puts("\n  gils (/bin scripts)\n")
-    for index in 0..items:len() do
-      const name = items[index].name
+    for index in 0..scripts:len() do
+      const name = scripts[index].name
       if (name:len() > 3 and name[(name:len() - 3)..] == ".rv") do help_row(name[0..(name:len() - 3)], "") end
     end
-    puts("\n  programs (/bin)\n")
-    for index in 0..items:len() do
-      const name = items[index].name
-      if (name:len() <= 3 or name[(name:len() - 3)..] != ".rv") do help_row(name, "") end
-    end
+  end
+  const progs = fs:entries("/usr/bin")
+  if progs != :nil do
+    puts("\n  programs (/usr/bin)\n")
+    for index in 0..progs:len() do help_row(progs[index].name, "") end
   end
 
   puts("\n  fonts (font <name>)\n")
   for index in 0..fonts:len() do help_row(fonts[index].name, "8x#{fonts[index].height}") end
-  const font_files = fs:entries("/fonts")
+  const font_files = fs:entries("/usr/share")
   if font_files != :nil do
-    puts("\n  fonts on disk (font load /fonts/x.psf)\n")
+    puts("\n  fonts on disk (font load /usr/share/x.psf)\n")
     for index in 0..font_files:len() do help_row(font_files[index].name, "") end
   end
   puts("\n")
@@ -186,8 +186,8 @@ fn font_file(name) do
     if fs:size(p ~ ".psf") >= 0 return { path = p ~ ".psf", kind = :psf }
     return { path = p, kind = :none }
   end
-  if fs:size("/fonts/#{name}.psf") >= 0 return { path = "/fonts/#{name}.psf", kind = :psf }
-  if fs:size("/fonts/#{name}.ttf") >= 0 return { path = "/fonts/#{name}.ttf", kind = :ttf }
+  if fs:size("/usr/share/#{name}.psf") >= 0 return { path = "/usr/share/#{name}.psf", kind = :psf }
+  if fs:size("/usr/share/#{name}.ttf") >= 0 return { path = "/usr/share/#{name}.ttf", kind = :ttf }
   return { path = name, kind = :none }
 end
 
@@ -196,7 +196,7 @@ fn cmd_font(context) do
     puts("fonts:")
     for index in 0..fonts:len() do puts(" #{fonts[index].name}(#{fonts[index].width}x#{fonts[index].height})") end
     puts("\n")
-    const font_files = fs:entries("/fonts")
+    const font_files = fs:entries("/usr/share")
     if font_files != :nil do
       puts("on disk:")
       for index in 0..font_files:len() do puts(" #{font_files[index].name}") end
@@ -291,7 +291,7 @@ fn exec_file(target) do
   else do
     candidates:push(expand_path(target))
     candidates:push(expand_path(target) ~ ".rv")
-    candidates:push("/bin/#{target}")
+    candidates:push("/usr/bin/#{target}")
     candidates:push("/bin/#{target}.rv")
   end
   for index in 0..candidates:len() do

@@ -2,8 +2,9 @@
 
 fn seed_bin() do
   fs:mkdir("/bin")
+  fs:mkdir("/usr/bin")
   for index in 0..prog_count() do
-    fs:store("/bin/#{prog_name(index)}", phys_to_str(prog_phys(index), prog_size(index)))
+    fs:store("/usr/bin/#{prog_name(index)}", phys_to_str(prog_phys(index), prog_size(index)))
   end
   for index in 0..script_count() do
     fs:store("/bin/#{script_name(index)}.rv", script_src(index))
@@ -11,9 +12,9 @@ fn seed_bin() do
 end
 
 fn seed_fonts() do
-  fs:mkdir("/fonts")
+  fs:mkdir("/usr/share")
   for index in 0..font_count() do
-    fs:store("/fonts/#{font_name(index)}", phys_to_str(font_phys(index), font_size(index)))
+    fs:store("/usr/share/#{font_name(index)}", phys_to_str(font_phys(index), font_size(index)))
   end
 end
 

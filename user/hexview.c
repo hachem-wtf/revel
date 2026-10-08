@@ -5,7 +5,7 @@ static const char HEX[] = "0123456789abcdef";
 static void put_hex8(unsigned char byte)
 {
     char digits[2] = { HEX[byte >> 4], HEX[byte & 15] };
-    sys_write(digits, 2);
+    sys_write(1, digits, 2);
 }
 
 static void put_hex32(unsigned long value)
@@ -13,7 +13,7 @@ static void put_hex32(unsigned long value)
     char digits[8];
     for (int nibble = 0; nibble < 8; nibble++)
         digits[nibble] = HEX[(value >> ((7 - nibble) * 4)) & 15];
-    sys_write(digits, 8);
+    sys_write(1, digits, 8);
 }
 
 #define PAGE 256
@@ -67,7 +67,7 @@ void _start(const char* arg, unsigned long arglen)
                 if (row + column < count)
                 {
                     put_hex8((unsigned char)buffer[row + column]);
-                    sys_write(" ", 1);
+                    sys_write(1, " ", 1);
                 }
                 else
                     put("   ");
@@ -78,19 +78,19 @@ void _start(const char* arg, unsigned long arglen)
             {
                 char character = buffer[row + column];
                 if (character >= 32 && character < 127)
-                    sys_write(&character, 1);
+                    sys_write(1, &character, 1);
                 else
-                    sys_write(".", 1);
+                    sys_write(1, ".", 1);
             }
             put("\n");
         }
 
         put("[n]ext [p]rev [q]uit (or up/down arrows) > ");
-        char key = (char)sys_read();
+        char key = (char)get_char();
         if (key == 27) // ESC
         {
-            sys_read();
-            char final = (char)sys_read();
+            get_char();
+            char final = (char)get_char();
             if (final == 'A')
                 key = 'p';
             else if (final == 'B')

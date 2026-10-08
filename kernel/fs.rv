@@ -346,6 +346,23 @@ global fs = {
     return entry.size
   end,
 
+  # TODO: ts needs a rewrite its not cheap and rewrites every file from scratch
+  write_at = fn(self, path, offset, bytes) do
+    const size = self:size(path)
+    let base = ""
+    if size > 0 do base = self:read_bytes(path, 0, size) end
+    let prefix = ""
+    if offset <= base:len() do prefix = base[0..offset] end
+    else do
+      prefix = base
+      while prefix:len() < offset do prefix = prefix ~ string.of_ascii(0) end
+    end
+    const after = offset + bytes:len()
+    let tail = ""
+    if after < base:len() do tail = base[after..] end
+    return self:store(path, prefix ~ bytes ~ tail)
+  end,
+
   cat = fn(self, path) do
     if self:ensure() == :false return :nil
     const entry = self:resolve(path)
@@ -444,3 +461,4 @@ global fs = {
 global fs_store = fn(name, text) fs:store(name, text)
 global fs_size = fn(name) fs:size(name)
 global fs_read_bytes = fn(name, offset, length) fs:read_bytes(name, offset, length)
+global fs_write_at = fn(name, offset, bytes) fs:write_at(name, offset, bytes)

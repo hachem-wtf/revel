@@ -21,6 +21,7 @@ const init_program = blk: {
         @embedFile("k_console") ++ "\n" ++
         @embedFile("k_vmm") ++ "\n" ++
         @embedFile("k_fs") ++ "\n" ++
+        @embedFile("k_io") ++ "\n" ++
         @embedFile("k_vfs") ++ "\n" ++
         @embedFile("k_seed") ++ "\n";
 
@@ -177,5 +178,16 @@ pub fn fsStore(name: []const u8, data: []const u8) bool {
     g_vm_running = true;
     defer g_vm_running = false;
     const r = vm.callFunctionParts(func, null, &[_]revo.Value{ name_val, data_val }, null) catch return false;
+    return (r.asNumOpt() orelse 0) == 1;
+}
+
+pub fn fsWriteAt(name: []const u8, offset: u64, data: []const u8) bool {
+    const vm = g_vm orelse return false;
+    const func = vm.getGlobal("fs_write_at") orelse return false;
+    const name_val = vm.ownValueString(name) catch return false;
+    const data_val = vm.ownValueString(data) catch return false;
+    g_vm_running = true;
+    defer g_vm_running = false;
+    const r = vm.callFunctionParts(func, null, &[_]revo.Value{ name_val, revo.Value.new.num(@as(f64, @floatFromInt(offset))), data_val }, null) catch return false;
     return (r.asNumOpt() orelse 0) == 1;
 }
