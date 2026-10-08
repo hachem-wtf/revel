@@ -21,9 +21,9 @@ pub fn build(b: *std.Build) void {
     };
 
     const Feature = std.Target.x86.Feature;
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.mmx));
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx));
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx2));
+    query.cpu_features_sub.addFeature(@backingInt(Feature.mmx));
+    query.cpu_features_sub.addFeature(@backingInt(Feature.avx));
+    query.cpu_features_sub.addFeature(@backingInt(Feature.avx2));
 
     const target = b.resolveTargetQuery(query);
 
@@ -44,7 +44,11 @@ pub fn build(b: *std.Build) void {
     kernel.setLinkerScript(b.path("boot/linker.ld"));
 
     // the big guns
-    const revo_dep = b.dependency("revo", .{ .target = target, .optimize = optimize });
+    const revo_dep = b.dependency("revo", .{
+        .target = target,
+        .optimize = optimize,
+        .features = "regex",
+    });
     const revo_mod = revo_dep.module("revo");
 
     var visited: std.AutoHashMap(*std.Build.Module, void) = .init(b.allocator);
