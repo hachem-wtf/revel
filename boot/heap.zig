@@ -1,4 +1,4 @@
-// freelist allocator type shit
+//! freelist allocator type shit
 
 const std = @import("std");
 const pmm = @import("pmm.zig");

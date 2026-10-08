@@ -22,7 +22,11 @@ your motd lies in `/etc/motd` and the profile script in `/etc/profile`
 
 `ed` is your only text editor\
 it's cooler than gnu ed. type `h` to see help\
-you also get a `!` command for free: it will run your file, saved or unsaved, as a revo script
+you also get some revo-specific commands, for free!\
+- `x` to execute and show the result
+- `!` to execute
+- `v` to check whether a file is valid
+- `o` to get an outline
 
 # License
 MIT, see [LICENSE](LICENSE).
