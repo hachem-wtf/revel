@@ -1,11 +1,11 @@
 # word count
 
 const context = env.ctx
-if context.argv:len() < 2 do puts("usage: wc <path>\n") end
+if context.argv:len() < 2 do fail("usage: wc <path>\n") end
 else do
   const path = expand_path(context.argv[1])
   const size = fs:size(path)
-  if size < 0 do puts("wc: #{path}: no such file\n") end
+  if size < 0 do fail("wc: #{path}: no such file\n") end
   else do
     const contents = if size > 0 fs:read_bytes(path, 0, size) else ""
     let line_count = 0

@@ -2,7 +2,7 @@
 
 const context = env.ctx
 const parsed = arg_name(context.rest, 0)
-if parsed.name:len() == 0 do puts("usage: cat <path>\n") end
+if parsed.name:len() == 0 do fail("usage: cat <path>\n") end
 else do
   const path = expand_path(parsed.name)
   if vfs_owns(path) do vfs_cat(path) end

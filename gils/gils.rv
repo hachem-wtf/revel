@@ -39,7 +39,7 @@ fn run_script_path(path, label, ctx) do
   if size < 0 return :false
   env.ctx = ctx
   const error_msg = eval_script(fs:read_bytes(path, 0, size))
-  if error_msg != :nil do puts("#{label}: #{error_msg}\n") end
+  if error_msg != :nil do fail("#{label}: #{error_msg}\n") end
   return :true
 end
 

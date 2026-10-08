@@ -88,7 +88,7 @@ fn cmd_cd(context) do
   const arg = if context.argv:len() > 1 context.argv[1] else "/"
   const target = if arg == ".." parent_of(wd.path) else expand_path(arg)
   if target == "/proc" or target == "/bin" or fs:is_dir(target) do wd.path = target end
-  else do puts("cd: #{arg}: not a directory\n") end
+  else do puts("cd: #{arg}: not a directory\n") shell_status.code = 1 end
 end
 
 fn cmd_pwd(context) puts("#{wd.path}\n")
@@ -309,7 +309,7 @@ fn cmd_run(context) do
   if context.argv:len() <= 1 do list_progs() return :nil end
   const target = context.argv[1]
   const info = exec_file(target)
-  if info.kind == :none do puts("run: #{target}: not found\n") return :nil end
+  if info.kind == :none do fail("run: #{target}: not found\n") return :nil end
   const sub_argv = context.rest:split(" ")
   const sub_ctx = make_ctx(context.rest, sub_argv)
   if info.kind == :script do
@@ -317,7 +317,7 @@ fn cmd_run(context) do
     return :nil
   end
   if load_file_elf(info.path, sub_ctx.rest) == :true return :hold
-  puts("run: #{target}: not executable\n")
+  fail("run: #{target}: not executable\n")
   return :nil
 end
 
@@ -328,6 +328,7 @@ fn run(line) do
   if line:trim():len() == 0 do puts(prompt()) return :nil end
   const argv = line:split(" ")
   const context = make_ctx(line, argv)
+  shell_status.code = 0
   const command = lookup(argv[0])
   if command != :nil do
     # :hold means the command took over (modal editor / launched a program) so
@@ -339,6 +340,7 @@ fn run(line) do
 
   if run_script(argv[0], context) == :true do puts(prompt()) return :nil end
   if run_prog(argv[0], context.rest) == :true return :nil
+  shell_status.code = 127
   puts("#{argv[0]}: command not found\n")
   puts(prompt())
 end

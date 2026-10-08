@@ -21,8 +21,8 @@ end
 
 const context = env.ctx
 const target = if context.argv:len() > 1 expand_path(context.argv[1]) else wd.path
-if (vfs_owns(target) and target != "/") do puts("tree: #{target}: virtual dir\n") end
-else if (target != "/" and fs:is_dir(target) == :false) do puts("tree: #{target}: not a directory\n") end
+if (vfs_owns(target) and target != "/") do fail("tree: #{target}: virtual dir\n") end
+else if (target != "/" and fs:is_dir(target) == :false) do fail("tree: #{target}: not a directory\n") end
 else do
   puts("#{target}\n")
   tree_walk(target, "")

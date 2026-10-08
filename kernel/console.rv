@@ -1,11 +1,54 @@
 const FONT_WIDTH = 8   # glyph width in pixels
 const FONT_HEIGHT = 16 # glyph height in pixels (8x16 vga bitmap font)
-const FG_COLOR = 0xd0d0d0
-const BG_COLOR = 0x101018
-const CURSOR_COLOR = 0x50fa7b
+
+# base16 from lung
+const BASE00 = 0x101010  # background
+const BASE03 = 0x505050  # bright black
+const BASE05 = 0xd0d0d0  # default foreground
+const BASE07 = 0xfafafa  # bright white
+const BASE08 = 0xab4642  # red
+const BASE09 = 0xdc9656  # orange
+const BASE0A = 0xf7ca88  # yellow
+const BASE0B = 0xa1b56c  # green
+const BASE0C = 0x86c1b9  # cyan
+const BASE0D = 0x7cafc2  # blue
+const BASE0E = 0xba8baf  # magenta
+const FG_COLOR = BASE05
+const BG_COLOR = BASE00
+const CURSOR_COLOR = BASE0B
 
 global wd = { path = "/" }
-global prompt = fn() "revel:#{wd.path}$ "
+global shell_status = { code = 0 }
+
+global prompt = fn() do
+  let mid = ""
+  unless (shell_status.code == 0) do mid = "\x1b[31m#{shell_status.code} " end
+  return "\x1b[33m#{wd.path} #{mid}\x1b[97m$\x1b[0m "
+end
+
+fn parse_int(text) do
+  let value = 0
+  for index in 0..text:len() do
+    const digit = text[index]:ascii()
+    if (digit >= 48 and digit <= 57) do value = value * 10 + (digit - 48) end
+  end
+  return value
+end
+
+fn sgr_color(code, current) do
+  if (code == 0 or code == 39) return BASE05
+  if code == 30 return BASE00
+  if code == 90 return BASE03
+  if (code == 31 or code == 91) return BASE08
+  if (code == 32 or code == 92) return BASE0B
+  if (code == 33 or code == 93) return BASE0A
+  if (code == 34 or code == 94) return BASE0D
+  if (code == 35 or code == 95) return BASE0E
+  if (code == 36 or code == 96) return BASE0C
+  if code == 37 return BASE05
+  if code == 97 return BASE07
+  return current
+end
 
 # runtime font bs
 fn embolden(byte, row) do return (byte bor (byte shl 1)) band 0xFF end
@@ -58,7 +101,23 @@ add_font("italic", remap_glyphs(slant), FONT_WIDTH, FONT_HEIGHT, :bitmap, :nil, 
 add_font("bolditalic", remap_glyphs(fn(byte, row) do return slant(embolden(byte, row), row) end), FONT_WIDTH, FONT_HEIGHT, :bitmap, :nil, 0)
 
 global console = {
-  column = 0, row = 0, scale = 1, shown = :false, cursor_x = 0, cursor_y = 0, blink = 0, font = FONT, font_width = FONT_WIDTH, font_height = FONT_HEIGHT, font_entry = find_font("vga"),
+  column = 0,
+  row = 0,
+  scale = 1,
+
+  shown = :false,
+  cursor_x = 0,
+  cursor_y = 0,
+  blink = 0,
+
+  font = FONT,
+  font_width = FONT_WIDTH,
+  font_height = FONT_HEIGHT,
+  font_entry = find_font("vga"),
+
+  fg = FG_COLOR,
+  ansi = 0,
+  ansi_param = "",
 
   # this is now font dependent
   cell_width = fn(self) self.font_width * self.scale,
@@ -87,7 +146,7 @@ global console = {
     for glyph_row in 0..self.font_height do
       const bits = glyph[glyph_row]
       for glyph_col in 0..self.font_width do
-        if (bits shr glyph_col) band 1 == 1 fill_rect(origin_x + glyph_col * self.scale, origin_y + glyph_row * self.scale, self.scale, self.scale, FG_COLOR)
+        if (bits shr glyph_col) band 1 == 1 fill_rect(origin_x + glyph_col * self.scale, origin_y + glyph_row * self.scale, self.scale, self.scale, self.fg)
       end
     end
   end,
@@ -103,8 +162,26 @@ global console = {
 
   # we dont do shift/cntrl, thats a job for future me lmao
   # NOTE: future me kinda delt with it, i was mad drunk
+  apply_sgr = fn(self, param) do
+    if param:len() == 0 do self.fg = BASE05 return :nil end
+    const parts = param:split(";")
+    for index in 0..parts:len() do self.fg = sgr_color(parse_int(parts[index]), self.fg) end
+  end,
+
   putc = fn(self, character) do
     const code = character:ascii()
+    if self.ansi == 1 do
+      if code == 91 do self.ansi = 2 self.ansi_param = "" end
+      else do self.ansi = 0 end
+      return :nil
+    end
+    if self.ansi == 2 do
+      if (code >= 48 and code <= 57) or code == 59 do self.ansi_param = self.ansi_param ~ character return :nil end
+      if code == 109 do self:apply_sgr(self.ansi_param) end
+      self.ansi = 0
+      return :nil
+    end
+    if code == 27 do self.ansi = 1 return :nil end  # ESC, start a sequence
     if code == 10 do self:newline() return :nil end # \n
     if code == 13 do self.column = 0 return :nil end # \r
     if code == 8 do                                  # backspace: move left
@@ -145,6 +222,11 @@ global console = {
 }
 
 global puts = fn(text) serial_puts(text)
+
+global fail = fn(message) do
+  puts(message)
+  shell_status.code = 1
+end
 
 global flush_console = fn() do
   console:cursor_clear()

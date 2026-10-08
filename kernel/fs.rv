@@ -249,11 +249,11 @@ global fs = {
   mkdir = fn(self, path) do
     if self:ensure() == :false return :nil
     const parent = self:resolve_parent(path)
-    if parent == :nil do puts("mkdir: #{path}: bad path\n") return :nil end
+    if parent == :nil do fail("mkdir: #{path}: bad path\n") return :nil end
     if parent.name:len() > NAME_MAX do puts("name too long (max #{NAME_MAX})\n") return :nil end
-    if self:dir_lookup(parent.dir, parent.name) != :nil do puts("mkdir: #{parent.name}: already exists\n") return :nil end
+    if self:dir_lookup(parent.dir, parent.name) != :nil do fail("mkdir: #{parent.name}: already exists\n") return :nil end
     const new_block = self:fat_alloc()
-    if new_block == 0 do puts("disk full\n") return :nil end
+    if new_block == 0 do fail("disk full\n") return :nil end
     self:fat_set(new_block, END)
     mem_zero(self.scratch, BLOCK)
     disk_write(new_block, self.scratch)
@@ -267,7 +267,7 @@ global fs = {
     if parent.name:len() > NAME_MAX do puts("name too long (max #{NAME_MAX})\n") return 0 end
     const existing = self:dir_lookup(parent.dir, parent.name)
     if existing != :nil do
-      if existing.type == T_DIR do puts("#{parent.name}: is a directory\n") return 0 end
+      if existing.type == T_DIR do fail("#{parent.name}: is a directory\n") return 0 end
       self:free_chain(existing.first)
     end
 
@@ -277,7 +277,7 @@ global fs = {
     let written = 0
     while written < size do
       const block = self:fat_alloc()
-      if block == 0 do puts("disk full\n") return 0 end
+      if block == 0 do fail("disk full\n") return 0 end
       self:fat_set(block, END)
       if first == 0 do first = block end
       else do self:fat_set(previous, block) end
@@ -349,8 +349,8 @@ global fs = {
   cat = fn(self, path) do
     if self:ensure() == :false return :nil
     const entry = self:resolve(path)
-    if entry == :nil do puts("cat: #{path}: no such file\n") return :nil end
-    if entry.type == T_DIR do puts("cat: #{path}: is a directory\n") return :nil end
+    if entry == :nil do fail("cat: #{path}: no such file\n") return :nil end
+    if entry.type == T_DIR do fail("cat: #{path}: is a directory\n") return :nil end
     let block = entry.first
     let remaining = entry.size
     let result = ""
@@ -369,7 +369,7 @@ global fs = {
   ls = fn(self, path) do
     if self:ensure() == :false return -1
     const entry = self:resolve(path)
-    if entry == :nil do puts("ls: #{path}: no such file\n") return -1 end
+    if entry == :nil do fail("ls: #{path}: no such file\n") return -1 end
     if entry.type != T_DIR do puts("  #{path}  #{entry.size} bytes\n") return -1 end
     let count = 0
     let block = entry.first
@@ -394,11 +394,11 @@ global fs = {
   rm = fn(self, path) do
     if self:ensure() == :false return :nil
     const parent = self:resolve_parent(path)
-    if parent == :nil do puts("rm: #{path}: no such file\n") return :nil end
+    if parent == :nil do fail("rm: #{path}: no such file\n") return :nil end
     const entry = self:dir_lookup(parent.dir, parent.name)
-    if entry == :nil do puts("rm: #{path}: no such file\n") return :nil end
+    if entry == :nil do fail("rm: #{path}: no such file\n") return :nil end
     if entry.type == T_DIR and self:dir_empty(entry.first) == :false do
-      puts("rm: #{parent.name}: directory not empty\n")
+      fail("rm: #{parent.name}: directory not empty\n")
       return :nil
     end
     self:free_chain(entry.first)
