@@ -258,7 +258,10 @@ global console = {
 
   fn cursor_clear(self) do
     if self.shown do
-      fill_rect(self.cursor_x * self:cell_width(), self.cursor_y * self:cell_height(), self:cell_width(), self:cell_height(), BG_COLOR)
+      const cw = self:cell_width()
+      const ch = self:cell_height()
+      const thick = 2 * self.scale
+      fill_rect(self.cursor_x * cw, self.cursor_y * ch + (ch - thick), cw, thick, BG_COLOR)
       self.shown = :false
     end
   end,
@@ -266,7 +269,10 @@ global console = {
   fn cursor_show(self) do
     self.cursor_x = self.column
     self.cursor_y = self.row
-    fill_rect(self.cursor_x * self:cell_width(), self.cursor_y * self:cell_height(), self:cell_width(), self:cell_height(), CURSOR_COLOR)
+    const cw = self:cell_width()
+    const ch = self:cell_height()
+    const thick = 2 * self.scale
+    fill_rect(self.cursor_x * cw, self.cursor_y * ch + (ch - thick), cw, thick, CURSOR_COLOR)
     self.shown = :true
   end,
 

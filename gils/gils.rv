@@ -38,7 +38,27 @@ global expand_path = fn(path) -> string do
     path = "#{wd.path}#{slash}#{path}"
   end
 
-  return path
+  # collapse . and .. segments
+  const raw = path:split("/")
+  let parts = {}
+  for index in 0..raw:len() do
+    const seg = raw[index]
+    if seg == ".." do
+      if (parts:len() > 0)
+        parts:pop()
+    end else if seg != "" and seg != "." do
+      parts:push(seg)
+    end
+  end
+
+  if (parts:len() == 0)
+    return "/"
+
+  let result = ""
+  for index in 0..parts:len() do
+    result = result ~ "/" ~ parts[index]
+  end
+  return result
 end
 
 fn run_script_path(path, label, ctx) -> bool do
