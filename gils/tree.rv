@@ -1,29 +1,39 @@
-# recursive directory listing.
+# recursive directory listing
 
 fn tree_walk(path, prefix) do
   const items = fs:entries(path)
-  if items == :nil return :nil
+  if (items == :nil)
+    return :nil
+
   for index in 0..items:len() do
     const entry = items[index]
     const last = index == items:len() - 1
     let branch = "|-- "
-    if last do branch = "`-- " end # font doesnt support fancy ascii symbols
-    const slash = if entry.type == 2 "/" else ""
+    # font doesnt support fancy ascii symbols
+    if (last)
+      branch = "`-- "
+
+    const slash = if (entry.type == 2) "/" else ""
     puts("#{prefix}#{branch}#{entry.name}#{slash}\n")
+
     if entry.type == 2 do
-      const child = if path == "/" "/#{entry.name}" else "#{path}/#{entry.name}"
+      const child = if (path == "/") "/#{entry.name}" else "#{path}/#{entry.name}"
       let indent = "|   "
-      if last do indent = "    " end
+      if (last)
+        indent = "    "
       tree_walk(child, prefix ~ indent)
     end
   end
 end
 
 const context = env.ctx
-const target = if context.argv:len() > 1 expand_path(context.argv[1]) else wd.path
-if (vfs_owns(target) and target != "/") do fail("tree: #{target}: virtual dir\n") end
-else if (target != "/" and fs:is_dir(target) == :false) do fail("tree: #{target}: not a directory\n") end
-else do
+const target = if (context.argv:len() > 1) expand_path(context.argv[1]) else wd.path
+
+if vfs_owns(target) and target != "/" do
+  fail("tree: #{target}: virtual dir\n")
+end else if target != "/" and fs:is_dir(target) == :false do
+  fail("tree: #{target}: not a directory\n")
+end else do
   puts("#{target}\n")
   tree_walk(target, "")
   # /proc is the one thing not on disk so tack it on at root

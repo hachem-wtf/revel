@@ -3,35 +3,51 @@
 
 const TASK_STATES = { "free", "ready", "dead", "blocked" }
 
-global vfs_owns = fn(path) do
-  if path == "/proc" or path:starts_with?("/proc/") return :true
+global vfs_owns = fn(path) -> bool do
+  if (path == "/proc" or path:starts_with?("/proc/"))
+    return :true
   return :false
 end
 
-global parse_pid = fn(text) do
-  if text:len() == 0 return -1
+global parse_pid = fn(text) -> num do
+  if (text:len() == 0)
+    return -1
+
   let number = 0
   for index in 0..text:len() do
     const code = text[index]:ascii()
-    if code < 48 or code > 57 return -1
+    if (code < 48 or code > 57)
+      return -1
     number = number * 10 + (code - 48)
   end
+
   return number
 end
 
 global vfs_ls = fn(path) do
   if path == "/proc" do
     puts("  uptime\n  meminfo\n")
+
     for pid in 0..task_max() do
-      if task_state(pid) != 0 puts("  #{pid}\n")
+      if (task_state(pid) != 0)
+        puts("  #{pid}\n")
     end
+  end else do
+    puts("ls: #{path}: no such directory\n")
   end
-  else do puts("ls: #{path}: no such directory\n") end
 end
 
 global vfs_cat = fn(path) do
-  if path == "/proc/uptime" do puts("#{math.floor(uptime() / 100)}s\n") return :nil end
-  if path == "/proc/meminfo" do puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB total\n") return :nil end
+  if path == "/proc/uptime" do
+    puts("#{math.floor(uptime() / 100)}s\n")
+    return :nil
+  end
+
+  if path == "/proc/meminfo" do
+    puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB total\n")
+    return :nil
+  end
+
   if path:starts_with?("/proc/") do
     const pid = parse_pid(path[6..])
     if pid >= 0 and pid < task_max() and task_state(pid) != 0 do
@@ -41,5 +57,6 @@ global vfs_cat = fn(path) do
     puts("cat: #{path}: no such file\n")
     return :nil
   end
+
   puts("cat: #{path}: no such file\n")
 end

@@ -10,13 +10,13 @@ fn pad(text, width) -> string do
 end
 
 fn help_row(label, description) do
-  let col = pad(label, 22)
+  let column = pad(label, 22)
 
   if label:len() >= 22 do
-    col = label ~ "  "
+    column = label ~ "  "
   end
 
-  puts("    #{col}#{description}\n")
+  puts("    #{column}#{description}\n")
 end
 
 fn help_group(title, group_name) do

@@ -6,41 +6,54 @@ fn register(usage, group, help, handler) do
   commands:push({ name = name, usage = usage, group = group, help = help, handler = handler })
 end
 
-fn lookup(name) do
+fn lookup(name) -> table | :nil do
   for index in 0..commands:len() do
-    if commands[index].name == name return commands[index]
+    if (commands[index].name == name)
+      return commands[index]
   end
   return :nil
 end
 
-fn make_ctx(line, argv) do
+fn make_ctx(line, argv) -> { line: string, argv: table, rest: string } do
   const name = argv[0]
   let rest = ""
+
   const cut = name:len() + 1
-  if line:len() > cut do rest = line[cut..] end
+  if (line:len() > cut)
+    rest = line[cut..]
+
   return { line = line, argv = argv, rest = rest }
 end
 
 # scripts read their args off env.ctx, stashed here before eval
 global env = { ctx = :nil }
 
-# first use of unless in history
-global expand_path = fn(path) do
-  if path:len() == 0 return wd.path
+# first use of unless in revo history
+global expand_path = fn(path) -> string do
+  if (path:len() == 0)
+    return wd.path
+
   unless (path[0] == "/") do
     const slash = unless (wd.path == "/") "/" else ""
     path = "#{wd.path}#{slash}#{path}"
   end
+
   return path
 end
 
-fn run_script_path(path, label, ctx) do
+fn run_script_path(path, label, ctx) -> bool do
   const size = fs:size(path)
-  if size < 0 return :false
+  if (size < 0)
+    return :false
+
   env.ctx = ctx
   const error_msg = eval_script(fs:read_bytes(path, 0, size))
-  if error_msg != :nil do fail("#{label}: #{error_msg}\n") end
+  if (error_msg != :nil)
+    fail("#{label}: #{error_msg}\n")
+
   return :true
 end
 
-fn run_script(name, ctx) run_script_path("/bin/#{name}.rv", name, ctx)
+fn run_script(name, ctx) -> bool do
+  return run_script_path("/bin/#{name}.rv", name, ctx)
+end

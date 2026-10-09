@@ -9,7 +9,7 @@ wipe()
 dump_memmap()
 
 fs:mount()
-if (disk_sectors() != 0 and fs.ready == :false) do
+if disk_sectors() != 0 and fs.ready == :false do
   puts("blank disk, formatting + seeding default files\n")
   fs:format()
   seed_fs()

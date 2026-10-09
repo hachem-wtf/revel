@@ -20,41 +20,50 @@ const CURSOR_COLOR = BASE0B
 global wd = { path = "/" }
 global shell_status = { code = 0 }
 
-global prompt = fn() do
-  let mid = ""
-  unless (shell_status.code == 0) do mid = "\x1b[31m#{shell_status.code} " end
-  return "\x1b[33m#{wd.path} #{mid}\x1b[97m$\x1b[0m "
+global prompt = fn() -> string do
+  let middle = ""
+  unless (shell_status.code == 0) do
+    middle = "\x1b[31m#{shell_status.code} "
+  end
+  return "\x1b[33m#{wd.path} #{middle}\x1b[97m$\x1b[0m "
 end
 
-fn parse_int(text) do
+fn parse_int(text) -> num do
   let value = 0
   for index in 0..text:len() do
     const digit = text[index]:ascii()
-    if (digit >= 48 and digit <= 57) do value = value * 10 + (digit - 48) end
+    if (digit >= 48 and digit <= 57)
+      value = value * 10 + (digit - 48)
   end
   return value
 end
 
-fn sgr_color(code, current) do
-  if (code == 0 or code == 39) return BASE05
-  if code == 30 return BASE00
-  if code == 90 return BASE03
-  if (code == 31 or code == 91) return BASE08
-  if (code == 32 or code == 92) return BASE0B
-  if (code == 33 or code == 93) return BASE0A
-  if (code == 34 or code == 94) return BASE0D
-  if (code == 35 or code == 95) return BASE0E
-  if (code == 36 or code == 96) return BASE0C
-  if code == 37 return BASE05
-  if code == 97 return BASE07
-  return current
+fn sgr_color(code, current) -> num do
+  return match code
+  | 0, 39 => BASE05
+  | 30 => BASE00
+  | 90 => BASE03
+  | 31, 91 => BASE08
+  | 32, 92 => BASE0B
+  | 33, 93 => BASE0A
+  | 34, 94 => BASE0D
+  | 35, 95 => BASE0E
+  | 36, 96 => BASE0C
+  | 37 => BASE05
+  | 97 => BASE07
+  | _ => current
 end
 
 # runtime font bs
-fn embolden(byte, row) do return (byte bor (byte shl 1)) band 0xFF end
-fn slant(byte, row) do return (byte shl ((FONT_HEIGHT - 1 - row) shr 2)) band 0xFF end
+fn embolden(byte, row) -> num do
+  return (byte bor (byte shl 1)) band 0xFF
+end
 
-fn remap_glyphs(transform) do
+fn slant(byte, row) -> num do
+  return (byte shl ((FONT_HEIGHT - 1 - row) shr 2)) band 0xFF
+end
+
+fn remap_glyphs(transform) -> table do
   let out = {}
   for glyph_index in 0..FONT:len() do
     const glyph = FONT[glyph_index]
@@ -65,15 +74,18 @@ fn remap_glyphs(transform) do
   return out
 end
 
-global reverse8 = fn(byte) do
+global reverse8 = fn(byte) -> num do
   let out = 0
   for bit in 0..8 do
-    if (byte shr bit) band 1 == 1 do out = out bor (1 shl (7 - bit)) end
+    if (byte shr bit) band 1 == 1 do
+      out = out bor (1 shl (7 - bit))
+    end
   end
   return out
 end
 
 global fonts = {}
+
 global add_font = fn(name, glyphs, width, height, kind, path, size) do
   for index in 0..fonts:len() do
     if fonts[index].name == name do
@@ -86,11 +98,14 @@ global add_font = fn(name, glyphs, width, height, kind, path, size) do
       return :nil
     end
   end
+
   fonts:push({ name = name, glyphs = glyphs, width = width, height = height, kind = kind, path = path, size = size })
 end
-global find_font = fn(name) do
+
+global find_font = fn(name) -> table | :nil do
   for index in 0..fonts:len() do
-    if fonts[index].name == name return fonts[index]
+    if (fonts[index].name == name)
+      return fonts[index]
   end
   return :nil
 end
@@ -120,40 +135,49 @@ global console = {
   ansi_param = "",
 
   # this is now font dependent
-  cell_width = fn(self) self.font_width * self.scale,
-  cell_height = fn(self) self.font_height * self.scale,
-  columns = fn(self) fb_width() / self:cell_width(),
-  rows = fn(self) fb_height() / self:cell_height(),
+  fn cell_width(self) self.font_width * self.scale,
+  fn cell_height(self) self.font_height * self.scale,
+  fn columns(self) fb_width() / self:cell_width(),
+  fn rows(self) fb_height() / self:cell_height(),
 
-  set_font = fn(self, entry) do
+  fn set_font(self, entry) do
     self.font = entry.glyphs
     self.font_width = entry.width
     self.font_height = entry.height
     self.font_entry = entry
+
     # a ttf renders at its true pixel size so we js bitmap zoom scale
-    if entry.kind == :ttf do self.scale = 1 end
+    if (entry.kind == :ttf)
+      self.scale = 1
     self:clear()
   end,
 
-  draw_glyph = fn(self, column, row, character) do
+  fn draw_glyph(self, column, row, character) do
     const origin_x = column * self:cell_width()
     const origin_y = row * self:cell_height()
     fill_rect(origin_x, origin_y, self:cell_width(), self:cell_height(), BG_COLOR) # clear the cell
+
     const code = character:ascii()
-    if code < 32 return :nil
-    if code > 127 return :nil
+    if (code < 32)
+      return :nil
+    if (code > 127)
+      return :nil
+
     const glyph = self.font[code - 32]
     for glyph_row in 0..self.font_height do
       const bits = glyph[glyph_row]
       for glyph_col in 0..self.font_width do
-        if (bits shr glyph_col) band 1 == 1 fill_rect(origin_x + glyph_col * self.scale, origin_y + glyph_row * self.scale, self.scale, self.scale, self.fg)
+        if (bits shr glyph_col) band 1 == 1 do
+          fill_rect(origin_x + glyph_col * self.scale, origin_y + glyph_row * self.scale, self.scale, self.scale, self.fg)
+        end
       end
     end
   end,
 
-  newline = fn(self) do
+  fn newline(self) do
     self.column = 0
     self.row += 1
+
     if self.row >= self:rows() do
       fb_scroll(self:cell_height(), BG_COLOR)
       self.row = self:rows() - 1
@@ -162,52 +186,84 @@ global console = {
 
   # we dont do shift/cntrl, thats a job for future me lmao
   # NOTE: future me kinda delt with it, i was mad drunk
-  apply_sgr = fn(self, param) do
-    if param:len() == 0 do self.fg = BASE05 return :nil end
+  fn apply_sgr(self, param) do
+    if param:len() == 0 do
+      self.fg = BASE05
+      return :nil
+    end
+
     const parts = param:split(";")
     for index in 0..parts:len() do self.fg = sgr_color(parse_int(parts[index]), self.fg) end
   end,
 
-  putc = fn(self, character) do
+  fn putc(self, character) do
     const code = character:ascii()
     if self.ansi == 1 do
-      if code == 91 do self.ansi = 2 self.ansi_param = "" end
-      else do self.ansi = 0 end
+      if code == 91 do
+        self.ansi = 2
+        self.ansi_param = ""
+      end else do
+        self.ansi = 0
+      end
+
       return :nil
     end
+
     if self.ansi == 2 do
-      if (code >= 48 and code <= 57) or code == 59 do self.ansi_param = self.ansi_param ~ character return :nil end
-      if code == 109 do self:apply_sgr(self.ansi_param) end
+      if (code >= 48 and code <= 57) or code == 59 do
+        self.ansi_param = self.ansi_param ~ character
+        return :nil
+      end
+
+      if (code == 109)
+        self:apply_sgr(self.ansi_param)
       self.ansi = 0
+
       return :nil
     end
-    if code == 27 do self.ansi = 1 return :nil end  # ESC, start a sequence
-    if code == 10 do self:newline() return :nil end # \n
-    if code == 13 do self.column = 0 return :nil end # \r
-    if code == 8 do                                  # backspace: move left
-      if self.column > 0 self.column -= 1
+
+    if code == 27 do # ESC
+      self.ansi = 1
       return :nil
     end
-    if code < 32 return :nil
+    # \n
+    if code == 10 do # \n
+      self:newline()
+      return :nil
+    end
+    if code == 13 do # \r
+      self.column = 0
+      return :nil
+    end
+    if code == 8 do # backspace
+      if (self.column > 0)
+        self.column -= 1
+      return :nil
+    end
+    if (code < 32)
+      return :nil
+
     self:draw_glyph(self.column, self.row, character)
     self.column += 1
-    if self.column >= self:columns() self:newline()
+
+    if (self.column >= self:columns())
+      self:newline()
   end,
 
-  clear = fn(self) do
+  fn clear(self) do
     fill_rect(0, 0, fb_width(), fb_height(), BG_COLOR)
     self.column = 0
     self.row = 0
   end,
 
-  cursor_clear = fn(self) do
+  fn cursor_clear(self) do
     if self.shown do
       fill_rect(self.cursor_x * self:cell_width(), self.cursor_y * self:cell_height(), self:cell_width(), self:cell_height(), BG_COLOR)
       self.shown = :false
     end
   end,
 
-  cursor_show = fn(self) do
+  fn cursor_show(self) do
     self.cursor_x = self.column
     self.cursor_y = self.row
     fill_rect(self.cursor_x * self:cell_width(), self.cursor_y * self:cell_height(), self:cell_width(), self:cell_height(), CURSOR_COLOR)
@@ -215,9 +271,12 @@ global console = {
   end,
 
   # render every byte the serial mirror has buffered
-  drain = fn(self) do
+  fn drain(self) do
     let byte = serial_next()
-    while byte >= 0 do self:putc(string.of_ascii(byte)) byte = serial_next() end
+    while (byte >= 0) do
+      self:putc(string.of_ascii(byte))
+      byte = serial_next()
+    end
   end,
 }
 
@@ -237,6 +296,7 @@ end
 
 global on_tick = fn(ticks) do
   let byte = serial_next()
+
   if byte >= 0 do
     console:cursor_clear()
     console:putc(string.of_ascii(byte))
@@ -245,6 +305,7 @@ global on_tick = fn(ticks) do
     console:cursor_show()
     return :nil
   end
+
   if proc_exited() do
     console:cursor_clear()
     puts(prompt())
@@ -253,9 +314,10 @@ global on_tick = fn(ticks) do
     console:cursor_show()
     return :nil
   end
+
   console.blink += 1
   if console.blink >= 50 do
     console.blink = 0
-    if console.shown console:cursor_clear() else console:cursor_show()
+    if (console.shown) console:cursor_clear() else console:cursor_show()
   end
 end

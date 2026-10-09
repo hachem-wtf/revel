@@ -1,37 +1,44 @@
 # stdio stuff
 
 global io = {
-  open = fn(self, path, mode) do
-    if mode == "w" do fs:store(path, "") end
+  fn open(self, path, mode) -> { path: string, offset: num } do
+    if mode == "w" do
+      fs:store(path, "")
+    end
+
     let offset = 0
     if mode == "a" do
       const size = fs:size(path)
-      if size > 0 do offset = size end
+      if (size > 0)
+        offset = size
     end
+
     return { path = path, offset = offset }
   end,
 
-  read = fn(self, handle, count) do
+  fn read(self, handle, count) -> string do
     const data = fs:read_bytes(handle.path, handle.offset, count)
     handle.offset += data:len()
     return data
   end,
 
-  read_all = fn(self, handle) do
+  fn read_all(self, handle) -> string do
     const size = fs:size(handle.path)
-    if size <= handle.offset return ""
+    if (size <= handle.offset)
+      return ""
+
     const data = fs:read_bytes(handle.path, handle.offset, size - handle.offset)
     handle.offset += data:len()
     return data
   end,
 
-  write = fn(self, handle, data) do
+  fn write(self, handle, data) -> num do
     fs:write_at(handle.path, handle.offset, data)
     handle.offset += data:len()
     return data:len()
   end,
 
-  seek = fn(self, handle, offset) do handle.offset = offset end,
-  tell = fn(self, handle) handle.offset,
-  close = fn(self, handle) :nil,
+  fn seek(self, handle, offset) do handle.offset = offset end,
+  fn tell(self, handle) -> num do return handle.offset end,
+  fn close(self, handle) :nil,
 }

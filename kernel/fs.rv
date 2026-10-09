@@ -511,7 +511,7 @@ global fs = {
     return result
   end,
 
-  fn read_into(self, path, dest) -> num do
+  fn read_into(self, path, destination) -> num do
     const entry = self:resolve(path)
 
     if entry == :nil or entry.type == T_DIR do
@@ -525,7 +525,7 @@ global fs = {
     while (block != 0 and block != END and remaining > 0) do
       const next_block = self:fat_get(block)
 
-      disk_read(block, dest + offset)
+      disk_read(block, destination + offset)
       offset += BLOCK
       remaining -= BLOCK
       block = next_block

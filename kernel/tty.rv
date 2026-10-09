@@ -6,51 +6,70 @@ global tty = {
   line = "", cursor = 0, esc = 0,
   history = {}, hist_index = 0,
 
-  back = fn(self, n) do
+  fn back(self, n) do
     let i = 0
-    while i < n do puts("\x08") i += 1 end
-  end,
-  blanks = fn(self, n) do
-    let i = 0
-    while i < n do puts(" ") i += 1 end
+    while (i < n) do
+      puts("\x08")
+      i += 1
+    end
   end,
 
-  insert = fn(self, ch) do
+  fn blanks(self, n) do
+    let i = 0
+    while (i < n) do
+      puts(" ")
+      i += 1
+    end
+  end,
+
+  fn insert(self, character) do
     const pre = self.line[0..self.cursor]
     const post = self.line[self.cursor..]
-    self.line = pre ~ ch ~ post
-    puts(ch ~ post)
+    self.line = pre ~ character ~ post
+    puts(character ~ post)
     self:back(post:len())
     self.cursor += 1
   end,
 
-  backspace = fn(self) do
-    if self.cursor == 0 return :nil
+  fn backspace(self) do
+    if (self.cursor == 0)
+      return :nil
+
     const pre = self.line[0..(self.cursor - 1)]
     const post = self.line[self.cursor..]
     self.line = pre ~ post
     self.cursor -= 1
+
     puts("\x08")
     puts(post ~ " ")
     self:back(post:len() + 1)
   end,
 
-  move_left = fn(self) do
-    if self.cursor > 0 do puts("\x08") self.cursor -= 1 end
+  fn move_left(self) do
+    if self.cursor > 0 do
+      puts("\x08")
+      self.cursor -= 1
+    end
   end,
-  move_right = fn(self) do
-    if self.cursor < self.line:len() do puts(self.line[self.cursor]) self.cursor += 1 end
+
+  fn move_right(self) do
+    if self.cursor < self.line:len() do
+      puts(self.line[self.cursor])
+      self.cursor += 1
+    end
   end,
-  home = fn(self) do
+
+  fn home(self) do
     self:back(self.cursor)
     self.cursor = 0
   end,
-  to_end = fn(self) do
+
+  fn to_end(self) do
     puts(self.line[self.cursor..])
     self.cursor = self.line:len()
   end,
 
-  kill = fn(self) do
+  fn kill(self) do
     self:back(self.cursor)
     self:blanks(self.line:len())
     self:back(self.line:len())
@@ -58,50 +77,65 @@ global tty = {
     self.cursor = 0
   end,
 
-  erase_word = fn(self) do
-    if self.cursor == 0 return :nil
+  fn erase_word(self) do
+    if (self.cursor == 0)
+      return :nil
+
     let at = self.cursor
-    while (at > 0 and self.line[at - 1] == " ") do at -= 1 end
-    while (at > 0 and self.line[at - 1] != " ") do at -= 1 end
+    while (at > 0 and self.line[at - 1] == " ")
+      at -= 1
+    while (at > 0 and self.line[at - 1] != " ")
+      at -= 1
+
     let count = self.cursor - at
-    while count > 0 do self:backspace() count -= 1 end
+    while (count > 0) do
+      self:backspace()
+      count -= 1
+    end
   end,
 
-  replace_line = fn(self, text) do
+  fn replace_line(self, text) do
     self:kill()
     self.line = text
     puts(text)
     self.cursor = text:len()
   end,
 
-  history_prev = fn(self) do
-    if self.history:len() == 0 return :nil
-    if self.hist_index > 0 do self.hist_index -= 1 end
+  fn history_prev(self) do
+    if (self.history:len() == 0)
+      return :nil
+    if (self.hist_index > 0)
+      self.hist_index -= 1
+
     self:replace_line(self.history[self.hist_index])
   end,
-  history_next = fn(self) do
-    if self.history:len() == 0 return :nil
+
+  fn history_next(self) do
+    if (self.history:len() == 0)
+      return :nil
+
     if self.hist_index < self.history:len() - 1 do
       self.hist_index += 1
       self:replace_line(self.history[self.hist_index])
-    end
-    else do
+    end else do
       self.hist_index = self.history:len()
       self:replace_line("")
     end
   end,
 
-  submit = fn(self) do
+  fn submit(self) do
     puts("\n")
     const entered = self.line
-    if entered:len() > 0 do self.history:push(entered) end
+    if (entered:len() > 0)
+      self.history:push(entered)
+
     self.hist_index = self.history:len()
     self.line = ""
     self.cursor = 0
     run(entered)
   end,
 
-  cancel = fn(self) do
+  fn cancel(self) do
     puts("^C\n")
     self.line = ""
     self.cursor = 0
@@ -109,44 +143,65 @@ global tty = {
     puts(prompt())
   end,
 
-  clear_screen = fn(self) do
+  fn clear_screen(self) do
     console:clear()
     puts(prompt())
     puts(self.line)
     self:back(self.line:len() - self.cursor)
   end,
 
-  feed = fn(self, byte) do
-    if stdin_deliver(byte) return :nil
+  fn feed(self, byte) do
+    if (stdin_deliver(byte))
+      return :nil
 
     if self.esc == 1 do
-      if byte == 91 do self.esc = 2 end
-      else do self.esc = 0 end
+      if byte == 91 do
+        self.esc = 2
+      end else do
+        self.esc = 0
+      end
+
       return :nil
     end
+
     if self.esc == 2 do
       self.esc = 0
-      if byte == 65 do self:history_prev() end       # up
-      else if byte == 66 do self:history_next() end  # down
-      else if byte == 67 do self:move_right() end    # right
-      else if byte == 68 do self:move_left() end     # left
-      else if byte == 72 do self:home() end          # home
-      else if byte == 70 do self:to_end() end        # end
+
+      match byte
+      | 65 => self:history_prev() # up
+      | 66 => self:history_next() # down
+      | 67 => self:move_right()   # right
+      | 68 => self:move_left()    # left
+      | 72 => self:home()         # home
+      | 70 => self:to_end()       # end
+      | _ => :nil
+
       return :nil
     end
-    if byte == 27 do self.esc = 1 return :nil end    # ESC, start a sequence
 
-    if byte == 10 do self:submit() return :nil end       # enter
-    if byte == 8 do self:backspace() return :nil end     # bs
-    if byte == 127 do self:erase_word() return :nil end  # del (ctrl-bs): erase word
-    if byte == 1 do self:home() return :nil end          # ctrl-a
-    if byte == 5 do self:to_end() return :nil end        # ctrl-e
-    if byte == 3 do self:cancel() return :nil end        # ctrl-c
-    if byte == 12 do self:clear_screen() return :nil end # ctrl-l
-    if byte == 21 do self:kill() return :nil end         # ctrl-u
-    if byte == 23 do self:erase_word() return :nil end   # ctrl-w
-    if byte < 32 return :nil                             # ctrl-d and other ctrls: ignore
-    if byte > 126 return :nil
-    self:insert(string.of_ascii(byte))
+    # ESC, start a sequence
+    if byte == 27 do
+      self.esc = 1
+      return :nil
+    end
+
+    match byte
+    | 10 => self:submit()        # enter
+    | 8 => self:backspace()      # bs
+    | 127 => self:erase_word()   # del (ctrl-bs)
+    | 1 => self:home()           # ctrl-a
+    | 5 => self:to_end()         # ctrl-e
+    | 3 => self:cancel()         # ctrl-c
+    | 12 => self:clear_screen()  # ctrl-l
+    | 21 => self:kill()          # ctrl-u
+    | 23 => self:erase_word()    # ctrl-w
+    | _ => do
+        # ctrl-d and other shits
+        if (byte < 32)
+          return :nil
+        if (byte > 126)
+          return :nil
+        self:insert(string.of_ascii(byte))
+      end
   end,
 }

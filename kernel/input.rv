@@ -12,7 +12,9 @@ fn pic_remap() do
   outb(0x21, 0x01)  outb(0xa1, 0x01)
   outb(0x21, 0xff)  outb(0xa1, 0xff)
 end
-fn pic_unmask(line) outb(0x21, inb(0x21) band (255 bxor (1 shl line)))
+
+fn pic_unmask(line)
+  outb(0x21, inb(0x21) band (255 bxor (1 shl line)))
 
 # 8253/8254 pit channel 0, mode 3 (square wave)
 # divisor 11931 -> ~100 hz (1193182 / 11931)
@@ -27,46 +29,82 @@ end
 # no fr this is just a key stroke handler
 global shell = { shift = :false, extended = :false, ctrl = :false }
 
-fn decode_key(code) do
-  if code == 0x2a or code == 0x36 do shell.shift = :true  return :nil end # shift down
-  if code == 0xaa or code == 0xb6 do shell.shift = :false return :nil end # shift up
-  if code == 0x1d do shell.ctrl = :true  return :nil end # ctrl down
-  if code == 0x9d do shell.ctrl = :false return :nil end # ctrl up
-  if code >= 128 return :nil            # other releases
-  if code == 28 return "\n"             # enter
+fn decode_key(code) -> string | :nil do
+  # shift down
+  if code == 0x2a or code == 0x36 do
+    shell.shift = :true
+    return :nil
+  end
+  # shift up
+  if code == 0xaa or code == 0xb6 do
+    shell.shift = :false
+    return :nil
+  end
+  # ctrl down
+  if code == 0x1d do
+    shell.ctrl = :true
+    return :nil
+  end
+  # ctrl up
+  if code == 0x9d do
+    shell.ctrl = :false
+    return :nil
+  end
+  # other releases
+  if (code >= 128)
+    return :nil
+  # enter
+  if (code == 28)
+    return "\n"
+  # backspace
   if code == 14 do
     if shell.ctrl do
       return "\x7f"
     end
-
     return "\x08"
-  end # backspace (ctrl: word erase)
-  if code < 2 return :nil
-  if code >= KEYMAP:len() return :nil
-  const character = if shell.shift KEYMAP_SHIFT[code] else KEYMAP[code]
-  if character == " " and code != 0x39 return :nil # blank cells = modifiers/unmapped
-  if shell.ctrl return string.of_ascii(character:ascii() band 0x1f)
+  end
+  if (code < 2)
+    return :nil
+  if (code >= KEYMAP:len())
+    return :nil
+
+  const character = if (shell.shift) KEYMAP_SHIFT[code] else KEYMAP[code]
+  # blank cells = modifiers/unmapped
+  if (character == " " and code != 0x39)
+    return :nil
+  if (shell.ctrl)
+    return string.of_ascii(character:ascii() band 0x1f)
   return character
 end
 
 global on_key = fn(code) do
-  if code == 0xe0 do shell.extended = :true return :nil end
+  if code == 0xe0 do
+    shell.extended = :true
+    return :nil
+  end
+
   if shell.extended do
     shell.extended = :false
     let final = 0
-    if code == 0x48 do final = 65 end      # up
-    else if code == 0x50 do final = 66 end # down
-    else if code == 0x4d do final = 67 end # right
-    else if code == 0x4b do final = 68 end # left
-    else if code == 0x47 do final = 72 end # home
-    else if code == 0x4f do final = 70 end # end
+
+    match code
+    | 0x48 => final = 65 # up
+    | 0x50 => final = 66 # down
+    | 0x4d => final = 67 # right
+    | 0x4b => final = 68 # left
+    | 0x47 => final = 72 # home
+    | 0x4f => final = 70 # end
+    | _ => :nil
+
     if final != 0 do
       tty:feed(27) tty:feed(91) tty:feed(final)
     end
     return :nil
   end
+
   const character = decode_key(code)
-  if character == :nil return :nil
+
+  if (character == :nil)
+    return :nil
   tty:feed(character:ascii())
 end
-
