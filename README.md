@@ -1,5 +1,5 @@
 # `revel
-a small x86-64 unix like os written in [revo](https://github.com/if-not-nil/revo).
+`/ˈrɛvəl/` a small x86-64 unix like os written in [revo](https://github.com/if-not-nil/revo). *(ty [gingeh](https://tech.lgbt/@Gingeh) for the ipa)*
 
 ![screenshot](docs/image.png)
 
