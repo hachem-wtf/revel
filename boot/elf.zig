@@ -5,4 +5,5 @@ pub const programs = [_]Program{
     .{ .name = "primes", .bytes = @embedFile("user_primes") },
     .{ .name = "save", .bytes = @embedFile("user_save") },
     .{ .name = "chat", .bytes = @embedFile("user_chat") },
+    .{ .name = "membrk", .bytes = @embedFile("user_membrk") },
 };

@@ -74,6 +74,8 @@ the syscall table
 | 7   | `open`     | path | flags  |        |        | fd or -1                  |
 | 8   | `close`    | fd   |        |        |        | 0 or -1                   |
 | 9   | `lseek`    | fd   | offset | whence |        | new offset                |
+| 10  | `brk`      | addr |        |        |        | new break or -1           |
+| 11  | `sbrk`     | inc  |        |        |        | old break or -1           |
 
 the three preopened fds
 

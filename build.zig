@@ -103,7 +103,7 @@ pub fn build(b: *std.Build) void {
         kernel.root_module.addAnonymousImport(e[0], .{ .root_source_file = b.path(e[1]) });
     }
 
-    inline for (.{ "hexview", "calc", "primes", "save", "chat" }) |prog| {
+    inline for (.{ "hexview", "calc", "primes", "save", "chat", "membrk" }) |prog| {
         const cc = b.addSystemCommand(&.{
             "zig",                  "cc",
             "-target",              "x86_64-freestanding",

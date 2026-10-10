@@ -3,6 +3,7 @@
 const std = @import("std");
 const Frame = @import("regs.zig").Frame;
 const vmm = @import("vmm.zig");
+const pmm = @import("pmm.zig");
 const gdt = @import("gdt.zig");
 const bridge = @import("bridge");
 
@@ -10,6 +11,9 @@ const MAX_TASKS = 8;
 const KSTACK_SIZE = 16 * 1024;
 const MAX_FDS = 8;
 const MAX_PATH = 128;
+
+// user heap lives here in the gap between the program and the arg/stack
+const HEAP_BASE: u64 = 0x1000_0000;
 
 const State = enum { free, ready, dead, blocked };
 
@@ -27,6 +31,8 @@ const Task = struct {
     cr3: u64 = 0,
     kstack_top: u64 = 0, // tss rsp0 for this task, 0 for the ring 0 kernel task
     state: State = .free,
+    brk_cur: u64 = 0, // the program break, top of the user heap
+    brk_top: u64 = 0, // first page above the break thats actually mapped
 };
 
 var tasks: [MAX_TASKS]Task = @splat(.{});
@@ -75,10 +81,53 @@ pub fn spawn(cr3: u64, entry: u64, ustack: u64, arg: u64, arglen: u64) void {
             .cr3 = cr3,
             .kstack_top = @intFromPtr(&kstacks[i]) + KSTACK_SIZE,
             .state = .ready,
+            .brk_cur = HEAP_BASE,
+            .brk_top = HEAP_BASE,
         };
         initFds(i);
         return;
     }
+}
+
+const USER_PAGE: u64 = vmm.WRITE | vmm.USER;
+
+// map heap pages until everything below target is present
+// false on oom
+fn growHeap(t: *Task, target: u64) bool {
+    while (t.brk_top < target) {
+        const phys = pmm.alloc() orelse return false;
+        // zero it so we never hand ring 3 whatever the fuck was in that frame before
+        const page: [*]u8 = @ptrFromInt(pmm.physToVirt(phys));
+        @memset(page[0..pmm.PAGE_SIZE], 0);
+        if (!vmm.map(t.cr3, t.brk_top, phys, USER_PAGE)) {
+            pmm.free(phys);
+            return false;
+        }
+        t.brk_top += pmm.PAGE_SIZE;
+    }
+    return true;
+}
+
+// move the break to addr
+pub fn brk(addr: u64) i64 {
+    if (current == 0 or addr < HEAP_BASE) return -1;
+    const t = &tasks[current];
+    if (addr > t.brk_cur and !growHeap(t, addr)) return -1;
+    t.brk_cur = addr;
+    return @intCast(addr);
+}
+
+// move the break by increment
+pub fn sbrk(increment: i64) i64 {
+    if (current == 0) return -1;
+    const t = &tasks[current];
+    const old = t.brk_cur;
+    const want: i64 = @as(i64, @intCast(old)) + increment;
+    if (want < @as(i64, @intCast(HEAP_BASE))) return -1;
+    const new_brk: u64 = @intCast(want);
+    if (new_brk > old and !growHeap(t, new_brk)) return -1;
+    t.brk_cur = new_brk;
+    return @intCast(old);
 }
 
 // stdin at keyboard

@@ -214,6 +214,12 @@ export fn syscallHandler(frame: *SyscallFrame) callconv(.c) void {
             const src: [*]const u8 = @ptrFromInt(frame.rsi);
             frame.rax = if (bridge.fsStore(name, src[0..len])) 1 else 0;
         },
+        10 => { // brk(addr)
+            frame.rax = @bitCast(sched.brk(frame.rdi));
+        },
+        11 => { // sbrk(increment)
+            frame.rax = @bitCast(sched.sbrk(@bitCast(frame.rdi)));
+        },
         else => serial.write("[syscall] unknown\r\n"),
     }
 }
