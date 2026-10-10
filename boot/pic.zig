@@ -17,6 +17,6 @@ pub const SLAVE_OFFSET: u8 = 0x28; // irq8..15 -> vectors 0x28..0x2f
 // tell the pic were done. the slaves interrupts also need the master eoid
 // since they arrive via the cascade
 pub fn eoi(irq: u4) void {
-    if (irq >= 8) port.outb(SLAVE_CMD, EOI);
+    if (irq >= 8) port.outb(SLAVE_CMD, EOI); // irq 8..15 live on the slave pic
     port.outb(MASTER_CMD, EOI);
 }

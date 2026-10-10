@@ -59,9 +59,9 @@ pub fn init(hhdm: *const limine.HhdmResponse, memmap: *const limine.MemoryMapRes
     // highest end of any usable region bounds the bitmap. we only ever
     //  alloc/free usable frames, so theres no point indexing past that
     var highest: u64 = 0;
-    for (entries) |e| {
-        if (e.type == .usable) {
-            const top = e.base + e.length;
+    for (entries) |entry| {
+        if (entry.type == .usable) {
+            const top = entry.base + entry.length;
             if (top > highest) highest = top;
         }
     }
@@ -70,9 +70,9 @@ pub fn init(hhdm: *const limine.HhdmResponse, memmap: *const limine.MemoryMapRes
 
     // park the bitmap in the first usable region big enough to hold it
     var storage_base: u64 = 0;
-    for (entries) |e| {
-        if (e.type == .usable and e.length >= bitmap_bytes) {
-            storage_base = e.base;
+    for (entries) |entry| {
+        if (entry.type == .usable and entry.length >= bitmap_bytes) {
+            storage_base = entry.base;
             break;
         }
     }
@@ -82,10 +82,10 @@ pub fn init(hhdm: *const limine.HhdmResponse, memmap: *const limine.MemoryMapRes
 
     // start with everything used, then punch out the usable regions
     @memset(bitmap, 0xFF);
-    for (entries) |e| {
-        if (e.type == .usable) {
-            forEachFrame(e.base, e.length, markFree);
-            usable_frames += e.length / PAGE_SIZE;
+    for (entries) |entry| {
+        if (entry.type == .usable) {
+            forEachFrame(entry.base, entry.length, markFree);
+            usable_frames += entry.length / PAGE_SIZE;
         }
     }
     free_frames = usable_frames;
@@ -134,19 +134,18 @@ pub fn alloc() ?u64 {
     return null;
 }
 
-// hand out n contiguous physical frames cause the heap needs one flat buffer, and a
-// single usable region is contiguous in physical space, so this just finds a
-// run of n free bits
+// hand out count contiguous physical frames cause the heap needs one flat buffer and a
+// single usable region is contiguous in physical space, so this just finds a run of count free bits
 // note: returns the base physical address of the run
-pub fn allocContig(n: usize) ?u64 {
-    if (n == 0) return null;
+pub fn allocContig(count: usize) ?u64 {
+    if (count == 0) return null;
     var i: usize = 0;
-    while (i + n <= total_frames) {
+    while (i + count <= total_frames) {
         var run: usize = 0;
-        while (run < n and !frameUsed(i + run)) : (run += 1) {}
-        if (run == n) {
+        while (run < count and !frameUsed(i + run)) : (run += 1) {}
+        if (run == count) {
             var j: usize = 0;
-            while (j < n) : (j += 1) {
+            while (j < count) : (j += 1) {
                 markUsed(i + j);
                 free_frames -= 1;
             }
@@ -179,24 +178,25 @@ pub fn usableBytes() u64 {
 pub fn dump(memmap: *const limine.MemoryMapResponse) void {
     const entries = memmap.entries.?[0..memmap.entry_count];
     serial.write("memory map:\r\n");
-    for (entries) |e| {
+    for (entries) |entry| {
         serial.write("  ");
-        serial.writeHex(e.base);
+        serial.writeHex(entry.base);
         serial.write(" len=");
-        serial.writeHex(e.length);
+        serial.writeHex(entry.length);
         serial.write(" type=");
-        serial.write(typeName(e.type));
+        serial.write(typeName(entry.type));
         serial.write("\r\n");
     }
+    const mib = 1024 * 1024;
     serial.write("usable: ");
-    serial.writeDec(usableBytes() / (1024 * 1024));
+    serial.writeDec(usableBytes() / mib);
     serial.write(" MiB, free: ");
-    serial.writeDec(freeBytes() / (1024 * 1024));
+    serial.writeDec(freeBytes() / mib);
     serial.write(" MiB\r\n");
 }
 
-fn typeName(t: limine.MemoryType) []const u8 {
-    return switch (t) {
+fn typeName(kind: limine.MemoryType) []const u8 {
+    return switch (kind) {
         .usable => "usable",
         .reserved => "reserved",
         .acpi_reclaimable => "acpi-reclaimable",

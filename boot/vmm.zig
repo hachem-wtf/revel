@@ -13,7 +13,7 @@ const pmm = @import("pmm.zig");
 pub const PRESENT: u64 = 1 << 0;
 pub const WRITE: u64 = 1 << 1;
 pub const USER: u64 = 1 << 2; // 1 = ring 3 accessible
-pub const NX: u64 = 1 << 63; // warning: needs efer.nxe, dont set unless enabled
+pub const NX: u64 = 1 << 63; // WARNING: NEEDS EFER.NXE DO NOT SET UNLESS ENABLED
 
 // bits 12..51 of an entry hold the physical frame address
 const ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
@@ -52,19 +52,21 @@ fn zeroFrame(phys: u64) void {
 
 // which 9 bit slice of the virtual address indexes level (3=pml4 .. 0=pt)
 fn index(virt: u64, level: u6) usize {
-    return @intCast((virt >> (12 + 9 * level)) & 0x1FF);
+    const page_shift = 12; // low 12 bits are the page offset
+    const index_bits = 9; // each level consumes 9 bits of the address
+    return @intCast((virt >> (page_shift + index_bits * level)) & 0x1FF);
 }
 
 // return the physical base of the next level table under entry i
 // if missing, create one
 fn nextTable(parent_phys: u64, i: usize, create: bool) ?u64 {
-    const t = table(parent_phys);
-    const entry = t[i];
+    const entries = table(parent_phys);
+    const entry = entries[i];
     if (entry & PRESENT != 0) return entry & ADDR_MASK;
     if (!create) return null;
     const frame = pmm.alloc() orelse return null;
     zeroFrame(frame);
-    t[i] = frame | PRESENT | WRITE | USER;
+    entries[i] = frame | PRESENT | WRITE | USER;
     return frame;
 }
 
@@ -92,6 +94,7 @@ pub fn createAddressSpace() ?u64 {
     zeroFrame(pml4);
     const src = table(activePml4());
     const dst = table(pml4);
+    // entries 256..511 are the shared kernel higher half
     var i: usize = 256;
     while (i < 512) : (i += 1) dst[i] = src[i];
     return pml4;
@@ -106,5 +109,5 @@ pub fn translate(pml4_phys: u64, virt: u64) ?u64 {
     const pt = nextTable(pd, index(virt, 1), false) orelse return null;
     const entry = table(pt)[index(virt, 0)];
     if (entry & PRESENT == 0) return null;
-    return (entry & ADDR_MASK) | (virt & 0xFFF);
+    return (entry & ADDR_MASK) | (virt & 0xFFF); // frame base | page offset
 }

@@ -29,6 +29,10 @@ const Idtr = packed struct {
     base: u64,
 };
 
+// the two faults that get their own ist stack, referenced from init + the handler
+const VEC_DOUBLE_FAULT: u8 = 8;
+const VEC_PAGE_FAULT: u8 = 14;
+
 var idt: [256]Gate = @splat(@bitCast(@as(u128, 0)));
 var idtr: Idtr = undefined;
 
@@ -98,7 +102,7 @@ export fn exceptionHandler(frame: *Frame) callconv(.c) noreturn {
     serial.write(" rsp=");
     serial.writeHex(frame.rsp);
     // page faults stash the offending address in cr2
-    if (frame.vector == 14) {
+    if (frame.vector == VEC_PAGE_FAULT) {
         const cr2 = asm volatile ("mov %%cr2, %[out]"
             : [out] "=r" (-> u64),
         );
@@ -152,15 +156,16 @@ export fn irqDispatch(frame: *Frame) callconv(.c) void {
     if (frame.vector == pic.MASTER_OFFSET + 0) sched.tick(frame);
 }
 
-// dpl 0 = only ring 0 can invoke via `int`, dpl 3 = ring 3 may (for syscalls)
-// ist 0 = use the stack the cpu would pick (rsp0 on a ring switch), ist 1..7 =
-// force tss.istn, for handlers that need a known good/big stack
+// dpl 0 = only ring 0 can invoke via int
+// dpl 3 = ring 3 may also invoke (for syscalls)
+// ist 0 = use the stack the cpu would pick (rsp0 on a ring switch)
+// ist 1..7 = force tss.istn
 pub fn setGate(vector: u8, handler: u64, dpl: u2, ist: u3) void {
     idt[vector] = .{
         .offset_low = @truncate(handler),
         .selector = gdt.KERNEL_CODE,
         .ist = ist,
-        .type_attr = 0x8E | (@as(u8, dpl) << 5),
+        .type_attr = 0x8E | (@as(u8, dpl) << 5), // 0x8e = present ring 0 64 bit interrupt gate, dpl in bits 5..6
         .offset_mid = @truncate(handler >> 16),
         .offset_high = @truncate(handler >> 32),
         .reserved = 0,
@@ -169,11 +174,12 @@ pub fn setGate(vector: u8, handler: u64, dpl: u2, ist: u3) void {
 
 // fill the exception vectors and load the idt
 pub fn init() void {
-    inline for (0..32) |v| setGate(v, @intFromPtr(&stub(v)), 0, 0);
+    inline for (0..32) |vector| setGate(vector, @intFromPtr(&stub(vector)), 0, 0); // vectors 0..31 are exceptions
     // #df (8) and #pf (14) land on ist2s fault stack, so a kernel stack overflow
     // produces a real exception dump instead of a silent triple fault
-    setGate(8, @intFromPtr(&stub(8)), 0, 2);
-    setGate(14, @intFromPtr(&stub(14)), 0, 2);
+    const ist_fault = 2;
+    setGate(VEC_DOUBLE_FAULT, @intFromPtr(&stub(VEC_DOUBLE_FAULT)), 0, ist_fault);
+    setGate(VEC_PAGE_FAULT, @intFromPtr(&stub(VEC_PAGE_FAULT)), 0, ist_fault);
     // irq0 (pit) -> vector 0x20, irq1 (keyboard) -> vector 0x21
     // the pic is remapped separately in boot
     setGate(pic.MASTER_OFFSET + 0, @intFromPtr(&irqStub(pic.MASTER_OFFSET + 0)), 0, 0);

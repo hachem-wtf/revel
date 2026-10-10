@@ -7,7 +7,8 @@ const serial = @import("serial.zig");
 const HEAP_PAGES: usize = 16384; // 64 mib
 const HEADER: usize = 16; // keeps payloads 16 aligned
 const ALIGN: usize = 16;
-const MIN_BLOCK: usize = 32; // header + a usable scrap, dont split below this
+const MIN_BLOCK: usize = 32; // header + alignment usable scrap, note: dont split below this
+const USED_BIT: usize = 1; // low header bit, 1 = allocated
 
 var heap_start: usize = 0;
 var heap_end: usize = 0;
@@ -15,20 +16,25 @@ var heap_end: usize = 0;
 // alloc landed instead of heap_start everytime. it was O(n) before
 var rover: usize = 0;
 
-inline fn word(b: usize) *usize {
-    return @ptrFromInt(b);
+// hot take: zig is very ugly
+inline fn word(block: usize) *usize {
+    return @ptrFromInt(block);
 }
-inline fn blkSize(b: usize) usize {
-    return word(b).* & ~@as(usize, 0xf);
+
+inline fn blkSize(block: usize) usize {
+    return word(block).* & ~@as(usize, ALIGN - 1);
 }
-inline fn blkUsed(b: usize) bool {
-    return (word(b).* & 1) != 0;
+
+inline fn blkUsed(block: usize) bool {
+    return (word(block).* & USED_BIT) != 0;
 }
-inline fn setBlk(b: usize, size: usize, used: bool) void {
-    word(b).* = size | @as(usize, if (used) 1 else 0);
+
+inline fn setBlk(block: usize, size: usize, used: bool) void {
+    word(block).* = size | (if (used) USED_BIT else 0);
 }
-inline fn alignUp(x: usize, a: usize) usize {
-    return (x + a - 1) & ~(a - 1);
+
+inline fn alignUp(value: usize, alignment: usize) usize {
+    return (value + alignment - 1) & ~(alignment - 1);
 }
 
 pub fn init() void {
@@ -54,47 +60,47 @@ fn allocImpl(_: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) 
     if (rover < heap_start or rover >= heap_end) rover = heap_start;
 
     // next fit bull shit
-    var b = rover;
+    var block = rover;
     var limit = heap_end;
     var pass: u8 = 0;
     while (pass < 2) : (pass += 1) {
-        while (b < limit) {
-            if (!blkUsed(b)) {
+        while (block < limit) {
+            if (!blkUsed(block)) {
                 // lazy coalesce
-                var size = blkSize(b);
-                while (b + size < heap_end and !blkUsed(b + size)) size += blkSize(b + size);
-                setBlk(b, size, false);
+                var size = blkSize(block);
+                while (block + size < heap_end and !blkUsed(block + size)) size += blkSize(block + size);
+                setBlk(block, size, false);
 
                 if (size >= need) {
                     if (size >= need + MIN_BLOCK) {
-                        setBlk(b, need, true);
-                        setBlk(b + need, size - need, false); // the leftover tail
-                        rover = b + need;
+                        setBlk(block, need, true);
+                        setBlk(block + need, size - need, false); // the leftover tail
+                        rover = block + need;
                     } else {
-                        setBlk(b, size, true);
-                        rover = b + size;
+                        setBlk(block, size, true);
+                        rover = block + size;
                     }
                     if (rover >= heap_end) rover = heap_start;
-                    return @ptrFromInt(b + HEADER);
+                    return @ptrFromInt(block + HEADER);
                 }
             }
-            b += blkSize(b);
+            block += blkSize(block);
         }
         // wrap
-        b = heap_start;
+        block = heap_start;
         limit = rover;
     }
     return null;
 }
 
 fn freeImpl(_: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
-    const b = @intFromPtr(buf.ptr) - HEADER;
-    setBlk(b, blkSize(b), false);
+    const block = @intFromPtr(buf.ptr) - HEADER;
+    setBlk(block, blkSize(block), false);
 }
 
 fn resizeImpl(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
-    const b = @intFromPtr(buf.ptr) - HEADER;
-    return new_len <= blkSize(b) - HEADER;
+    const block = @intFromPtr(buf.ptr) - HEADER;
+    return new_len <= blkSize(block) - HEADER;
 }
 
 fn remapImpl(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {

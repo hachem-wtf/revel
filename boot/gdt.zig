@@ -46,16 +46,11 @@ const Tss = packed struct {
 
 var tss: Tss = .{};
 
-// the stack the cpu lands on for a ring0 entry from ring3 (16 kib). the scheduler
+// the stack the cpu lands on for a ring0 entry from ring3 (16 kib) so the scheduler
 // overrides rsp0 per task, this is the boot default. the plain irq handlers run
-// here and are tiny, so 16 kib is fine
+// here and are tiny so 16 kib is fine ¯\_(ツ)_/¯
 var kernel_stack: [16 * 1024]u8 align(16) = undefined;
 
-// int 0x80 uses ist1: syscalls may call into the revo vm, whose computed goto
-// dispatcher frame is huge (~330 kib observed for a single trivial call), so it
-// needs a big dedicated stack, since the small per task rsp0 kstacks overflow it
-// (that was the old "vm hangs in a syscall"). 2 mib gives room for a few nested
-// vm entries, like the 4 mib boot stack the event loop uses
 var trap_stack: [2 * 1024 * 1024]u8 align(16) = undefined;
 // #df/#pf use ist2 so a stack overflow lands on a known good stack and produces a
 // loud exception dump instead of a silent triple fault
@@ -97,20 +92,20 @@ pub fn load() void {
     tss.rsp0 = @intFromPtr(&kernel_stack) + kernel_stack.len; // stack grows down
     tss.ist1 = ist1Top(); // big stack for int 0x80 (vm calls)
     tss.ist2 = ist2Top(); // fault stack for #df/#pf
-    tss.iomap_base = @sizeOf(Tss); // no i/o bitmap
-    const d = tssDescriptor(@intFromPtr(&tss), @sizeOf(Tss) - 1);
-    gdt[5] = d.low;
-    gdt[6] = d.high;
+    tss.iomap_base = @sizeOf(Tss); // no io bitmap
+    const descriptor = tssDescriptor(@intFromPtr(&tss), @sizeOf(Tss) - 1);
+    gdt[5] = descriptor.low; // tss descriptor spans slots 5 and 6
+    gdt[6] = descriptor.high;
 
     gdtr = .{ .limit = @sizeOf(@TypeOf(gdt)) - 1, .base = @intFromPtr(&gdt) };
     asm volatile (
         \\ lgdt (%[gdtr])
-        \\ pushq $0x08
+        \\ pushq %[kcode]
         \\ leaq 1f(%rip), %rax
         \\ pushq %rax
         \\ lretq
         \\ 1:
-        \\ movw $0x10, %ax
+        \\ movw %[kdata], %ax
         \\ movw %ax, %ds
         \\ movw %ax, %es
         \\ movw %ax, %fs
@@ -120,6 +115,8 @@ pub fn load() void {
         \\ ltr %ax
         :
         : [gdtr] "r" (&gdtr),
+          [kcode] "i" (@as(u16, KERNEL_CODE)),
+          [kdata] "i" (@as(u16, KERNEL_DATA)),
           [tss] "i" (@as(u16, TSS_SEL)),
         : .{ .rax = true, .memory = true });
 }

@@ -35,6 +35,14 @@ const CMD_WRITE = 0x30;
 const CMD_FLUSH = 0xE7;
 const CMD_IDENTIFY = 0xEC;
 
+const DRIVE_MASTER = 0xA0; // chs mode (for identify)
+const DRIVE_LBA = 0xE0; // lba mode (top nibble holds lba 24..27)
+const FLOAT_BUS = 0xFF; // status read on a bus with no drive
+const SPIN_LIMIT = 1_000_000; // busy poll cap before we call the bus dead
+const IDENTIFY_WORDS = 256; // identify returns one sector of 16 bit words
+const ID_SECTORS_LO = 60; // identify words 60/61 hold the 28 bit sector count
+const ID_SECTORS_HI = 61;
+
 var g_present = false;
 var g_sectors: u64 = 0;
 
@@ -59,7 +67,7 @@ fn delay400() void {
 // returns false if it never does (dead bus)
 fn waitNotBusy() bool {
     var spins: u32 = 0;
-    while (spins < 1_000_000) : (spins += 1) {
+    while (spins < SPIN_LIMIT) : (spins += 1) {
         if (port.inb(CMD) & ST_BSY == 0) return true;
     }
     return false;
@@ -69,7 +77,7 @@ fn waitNotBusy() bool {
 // false on error/timeout
 fn waitDrq() bool {
     var spins: u32 = 0;
-    while (spins < 1_000_000) : (spins += 1) {
+    while (spins < SPIN_LIMIT) : (spins += 1) {
         const st = port.inb(CMD);
         if (st & ST_ERR != 0) return false;
         if (st & ST_BSY == 0 and st & ST_DRQ != 0) return true;
@@ -79,7 +87,7 @@ fn waitDrq() bool {
 
 // select master and load the lba + a one sector count
 fn selectSector(lba: u28) void {
-    port.outb(DRIVE, 0xE0 | @as(u8, @truncate((lba >> 24) & 0x0F)));
+    port.outb(DRIVE, DRIVE_LBA | @as(u8, @truncate((lba >> 24) & 0x0F)));
     port.outb(FEATURES, 0);
     port.outb(SECCOUNT, 1);
     port.outb(LBA_LO, @truncate(lba & 0xFF));
@@ -92,12 +100,12 @@ fn selectSector(lba: u28) void {
 // words 60/61 hold the 28 bit sector count
 pub fn init() void {
     // a nonexistent bus floats high, bail before we wait a million spins on it
-    if (port.inb(CMD) == 0xFF) {
+    if (port.inb(CMD) == FLOAT_BUS) {
         serial.write("ata: no drive on primary bus\r\n");
         return;
     }
 
-    port.outb(DRIVE, 0xA0); // master
+    port.outb(DRIVE, DRIVE_MASTER);
     delay400();
     port.outb(SECCOUNT, 0);
     port.outb(LBA_LO, 0);
@@ -115,10 +123,10 @@ pub fn init() void {
         return;
     }
 
-    var id: [256]u16 = undefined;
-    for (&id) |*w| w.* = port.inw(DATA);
+    var id: [IDENTIFY_WORDS]u16 = undefined;
+    for (&id) |*word| word.* = port.inw(DATA);
 
-    g_sectors = (@as(u64, id[61]) << 16) | id[60];
+    g_sectors = (@as(u64, id[ID_SECTORS_HI]) << 16) | id[ID_SECTORS_LO];
     g_present = true;
     serial.write("ata: primary master, sectors=");
     serial.writeDec(g_sectors);
@@ -133,9 +141,9 @@ pub fn read(lba: u28, buf: *[SECTOR]u8) bool {
     if (!waitDrq()) return false;
     var i: usize = 0;
     while (i < SECTOR) : (i += 2) {
-        const w = port.inw(DATA);
-        buf[i] = @truncate(w & 0xFF);
-        buf[i + 1] = @truncate(w >> 8);
+        const word = port.inw(DATA);
+        buf[i] = @truncate(word & 0xFF);
+        buf[i + 1] = @truncate(word >> 8);
     }
     return true;
 }
@@ -150,8 +158,8 @@ pub fn write(lba: u28, buf: *const [SECTOR]u8) bool {
     if (!waitDrq()) return false;
     var i: usize = 0;
     while (i < SECTOR) : (i += 2) {
-        const w = @as(u16, buf[i]) | (@as(u16, buf[i + 1]) << 8);
-        port.outw(DATA, w);
+        const word = @as(u16, buf[i]) | (@as(u16, buf[i + 1]) << 8);
+        port.outw(DATA, word);
     }
     port.outb(CMD, CMD_FLUSH);
     _ = waitNotBusy();

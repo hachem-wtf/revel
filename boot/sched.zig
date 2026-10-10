@@ -68,16 +68,18 @@ pub fn spawn(cr3: u64, entry: u64, ustack: u64, arg: u64, arglen: u64) void {
     var i: usize = 1;
     while (i < MAX_TASKS) : (i += 1) {
         if (tasks[i].state != .free) continue;
-        var f = std.mem.zeroes(Frame);
-        f.rip = entry;
-        f.cs = 0x1b; // user code (0x18) | rpl 3
-        f.rflags = 0x202; // reserved bit + if=1 so its preemptible
-        f.rsp = ustack;
-        f.ss = 0x23; // user data (0x20) | rpl 3
-        f.rdi = arg; // _start(arg_ptr, arg_len) the sysv first two args
-        f.rsi = arglen;
+        const rpl_user = 3; // low two selector bits request ring 3
+        const rflags_init = (1 << 1) | (1 << 9); // reserved bit + interrupt enable (preemptible)
+        var frame = std.mem.zeroes(Frame);
+        frame.rip = entry;
+        frame.cs = @as(u64, gdt.USER_CODE) | rpl_user;
+        frame.rflags = rflags_init;
+        frame.rsp = ustack;
+        frame.ss = @as(u64, gdt.USER_DATA) | rpl_user;
+        frame.rdi = arg; // _start(arg_ptr, arg_len) the sysv first two args
+        frame.rsi = arglen;
         tasks[i] = .{
-            .frame = f,
+            .frame = frame,
             .cr3 = cr3,
             .kstack_top = @intFromPtr(&kstacks[i]) + KSTACK_SIZE,
             .state = .ready,
@@ -93,17 +95,17 @@ const USER_PAGE: u64 = vmm.WRITE | vmm.USER;
 
 // map heap pages until everything below target is present
 // false on oom
-fn growHeap(t: *Task, target: u64) bool {
-    while (t.brk_top < target) {
+fn growHeap(task: *Task, target: u64) bool {
+    while (task.brk_top < target) {
         const phys = pmm.alloc() orelse return false;
         // zero it so we never hand ring 3 whatever the fuck was in that frame before
         const page: [*]u8 = @ptrFromInt(pmm.physToVirt(phys));
         @memset(page[0..pmm.PAGE_SIZE], 0);
-        if (!vmm.map(t.cr3, t.brk_top, phys, USER_PAGE)) {
+        if (!vmm.map(task.cr3, task.brk_top, phys, USER_PAGE)) {
             pmm.free(phys);
             return false;
         }
-        t.brk_top += pmm.PAGE_SIZE;
+        task.brk_top += pmm.PAGE_SIZE;
     }
     return true;
 }
@@ -111,28 +113,28 @@ fn growHeap(t: *Task, target: u64) bool {
 // move the break to addr
 pub fn brk(addr: u64) i64 {
     if (current == 0 or addr < HEAP_BASE) return -1;
-    const t = &tasks[current];
-    if (addr > t.brk_cur and !growHeap(t, addr)) return -1;
-    t.brk_cur = addr;
+    const task = &tasks[current];
+    if (addr > task.brk_cur and !growHeap(task, addr)) return -1;
+    task.brk_cur = addr;
     return @intCast(addr);
 }
 
 // move the break by increment
 pub fn sbrk(increment: i64) i64 {
     if (current == 0) return -1;
-    const t = &tasks[current];
-    const old = t.brk_cur;
+    const task = &tasks[current];
+    const old = task.brk_cur;
     const want: i64 = @as(i64, @intCast(old)) + increment;
     if (want < @as(i64, @intCast(HEAP_BASE))) return -1;
     const new_brk: u64 = @intCast(want);
-    if (new_brk > old and !growHeap(t, new_brk)) return -1;
-    t.brk_cur = new_brk;
+    if (new_brk > old and !growHeap(task, new_brk)) return -1;
+    task.brk_cur = new_brk;
     return @intCast(old);
 }
 
 // stdin at keyboard
 fn initFds(i: usize) void {
-    for (&fdtabs[i]) |*f| f.* = .{};
+    for (&fdtabs[i]) |*slot| slot.* = .{};
     fdtabs[i][0].kind = .keyboard;
     fdtabs[i][1].kind = .console;
     fdtabs[i][2].kind = .console;
@@ -142,13 +144,13 @@ fn initFds(i: usize) void {
 pub fn fdOpen(path: []const u8) i64 {
     var i: usize = 3;
     while (i < MAX_FDS) : (i += 1) {
-        const f = &fdtabs[current][i];
-        if (f.kind == .closed) {
-            f.kind = .file;
-            f.offset = 0;
-            const n = @min(path.len, MAX_PATH);
-            @memcpy(f.path[0..n], path[0..n]);
-            f.path_len = n;
+        const slot = &fdtabs[current][i];
+        if (slot.kind == .closed) {
+            slot.kind = .file;
+            slot.offset = 0;
+            const count = @min(path.len, MAX_PATH);
+            @memcpy(slot.path[0..count], path[0..count]);
+            slot.path_len = count;
             return @intCast(i);
         }
     }
@@ -158,15 +160,15 @@ pub fn fdOpen(path: []const u8) i64 {
 // foid decimator get
 pub fn fdGet(fd: i64) ?*Fd {
     if (fd < 0 or fd >= MAX_FDS) return null;
-    const f = &fdtabs[current][@intCast(fd)];
-    if (f.kind == .closed) return null;
-    return f;
+    const slot = &fdtabs[current][@intCast(fd)];
+    if (slot.kind == .closed) return null;
+    return slot;
 }
 
 // foid decimator close
 pub fn fdClose(fd: i64) i64 {
-    const f = fdGet(fd) orelse return -1;
-    f.kind = .closed;
+    const slot = fdGet(fd) orelse return -1;
+    slot.kind = .closed;
     return 0;
 }
 
@@ -205,9 +207,9 @@ pub fn exitCurrent() void {
 }
 
 pub fn takeProcExited() bool {
-    const e = proc_exited_flag;
+    const exited = proc_exited_flag;
     proc_exited_flag = false;
-    return e;
+    return exited;
 }
 
 pub fn readReady() ?u8 {
@@ -249,8 +251,8 @@ pub fn tick(frame: *Frame) void {
 
     var next = current;
     var i = current;
-    var n: usize = 0;
-    while (n < MAX_TASKS) : (n += 1) {
+    var count: usize = 0;
+    while (count < MAX_TASKS) : (count += 1) {
         i = (i + 1) % MAX_TASKS;
         if (tasks[i].state == .ready) {
             next = i;

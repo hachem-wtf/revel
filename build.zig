@@ -110,6 +110,8 @@ pub fn build(b: *std.Build) void {
             "-ffreestanding",       "-nostdlib",
             "-static",              "-no-pie",
             "-fno-stack-protector", "-fno-sanitize=all",
+            "-Wall",                "-Wextra",
+            "-Werror",              "-Wpedantic",
             "-Wl,-T,user/link.ld",  "-Wl,--build-id=none",
             "-o",
         });

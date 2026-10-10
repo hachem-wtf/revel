@@ -1,5 +1,5 @@
 // limine scans the loaded image for these magic numbers, baserevision is
-// a handshake, essentially we ask limine for rev 3, and if it supports it,
+// id0 handshake, essentially we ask limine for rev 3, and if it supports it,
 // limine zeros it out
 pub const BaseRevision = extern struct {
     magic0: u64 = 0xf9562b2d5c95a6c8,
@@ -27,8 +27,8 @@ pub const RequestsEndMarker = extern struct {
 
 // every request id starts with this common magic, then two request specific
 // words, bootloader scans .limine_requests for these and fills in `response`
-fn requestId(a: u64, b: u64) [4]u64 {
-    return .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, a, b };
+fn requestId(id0: u64, id1: u64) [4]u64 {
+    return .{ 0xc7b1dd30df4c8b88, 0x0a82e883a194f07b, id0, id1 };
 }
 
 // this comes from the limine spec

@@ -24,10 +24,9 @@ void _start(const char* arg, unsigned long arglen)
     }
 
     char buffer[256];
-    long n;
-    while ((n = sys_read(fd, buffer, sizeof(buffer))) > 0)
-        sys_write(1, buffer, (unsigned long)n);
-
-    sys_close(fd);
+    long bytes_read;
+    while ((bytes_read = sys_read(fd, buffer, sizeof(buffer))) > 0)
+        (void)sys_write(1, buffer, (unsigned long)bytes_read);
+    (void)sys_close(fd);
     sys_exit(0);
 }

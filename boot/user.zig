@@ -16,9 +16,33 @@ const O_CREAT: u64 = 0x40;
 const O_TRUNC: u64 = 0x200;
 const O_APPEND: u64 = 0x400;
 
+// syscall numbers
+const SYS_EXIT: u64 = 0;
+const SYS_WRITE: u64 = 1;
+const SYS_READ: u64 = 2;
+const SYS_FS_SIZE: u64 = 4;
+const SYS_FS_READ: u64 = 5;
+const SYS_FS_WRITE: u64 = 6;
+const SYS_OPEN: u64 = 7;
+const SYS_CLOSE: u64 = 8;
+const SYS_LSEEK: u64 = 9;
+const SYS_BRK: u64 = 10;
+const SYS_SBRK: u64 = 11;
+
+// lseek whence
+const SEEK_SET: u64 = 0;
+const SEEK_CUR: u64 = 1;
+const SEEK_END: u64 = 2;
+
+const SYSCALL_VECTOR: u8 = 0x80; // the int vector ring 3 traps through
+const INT80_LEN: u64 = 2; // length of the int 0x80 instruction, i use this to rewind rip
+const MAX_IO: u64 = 4096; // clamp on a single read/write
+const MAX_FS_WRITE: u64 = 64 * 1024; // clamp on a whole file write
+const MAX_NAME = 128;
+
 // scratch for a filename copied out of the caller
 // legit one static buffer is fine
-var name_buf: [128]u8 = undefined;
+var name_buf: [MAX_NAME]u8 = undefined;
 fn userName(ptr: u64) []const u8 {
     const p: [*]const u8 = @ptrFromInt(ptr);
     var i: usize = 0;
@@ -51,7 +75,7 @@ pub const SyscallFrame = extern struct {
 
 // install the int 0x80 gate at dpl 3 so ring3 code is allowed to invoke it
 pub fn installSyscall() void {
-    idt.setGate(0x80, @intFromPtr(&syscallStub), 3, 1); // ist1: big stack for vm calls
+    idt.setGate(SYSCALL_VECTOR, @intFromPtr(&syscallStub), 3, 1); // ist1: big stack for vm calls
 }
 
 // 1- save gp regs
@@ -74,39 +98,39 @@ export fn syscallHandler(frame: *SyscallFrame) callconv(.c) void {
     // i js reorganized half of these so if anyone wrote code in asm
     // for this (me), your syscalled are fucked
     switch (frame.rax) {
-        0 => { // exit(code): code in rdi
+        SYS_EXIT => { // exit(code): code in rdi
             sched.exitCurrent();
             asm volatile ("sti");
             while (true) asm volatile ("hlt");
         },
-        1 => { // write(fd, ptr, len)
+        SYS_WRITE => { // write(fd, ptr, len)
             const len = frame.rdx;
-            if (sched.fdGet(@bitCast(frame.rdi))) |f| {
-                if (f.kind == .console) {
-                    if (len > 0 and len <= 4096) {
+            if (sched.fdGet(@bitCast(frame.rdi))) |descriptor| {
+                if (descriptor.kind == .console) {
+                    if (len > 0 and len <= MAX_IO) {
                         const bytes: [*]const u8 = @ptrFromInt(frame.rsi);
                         serial.write(bytes[0..len]);
                     }
                     frame.rax = len;
-                } else if (f.kind == .file) {
-                    const n = @min(len, 4096);
+                } else if (descriptor.kind == .file) {
+                    const count = @min(len, MAX_IO);
                     const src: [*]const u8 = @ptrFromInt(frame.rsi);
-                    if (bridge.fsWriteAt(f.path[0..f.path_len], f.offset, src[0..n])) {
-                        f.offset += n;
-                        frame.rax = n;
+                    if (bridge.fsWriteAt(descriptor.path[0..descriptor.path_len], descriptor.offset, src[0..count])) {
+                        descriptor.offset += count;
+                        frame.rax = count;
                     } else frame.rax = SYS_ERR;
                 } else {
                     frame.rax = SYS_ERR; // keyboard isnt writable
                 }
             } else frame.rax = SYS_ERR;
         },
-        2 => { // read(fd, buf, count)
+        SYS_READ => { // read(fd, buf, count)
             const count = frame.rdx;
-            const f = sched.fdGet(@bitCast(frame.rdi)) orelse {
+            const descriptor = sched.fdGet(@bitCast(frame.rdi)) orelse {
                 frame.rax = SYS_ERR;
                 return;
             };
-            switch (f.kind) {
+            switch (descriptor.kind) {
                 .keyboard => {
                     if (count == 0) {
                         frame.rax = 0;
@@ -137,7 +161,7 @@ export fn syscallHandler(frame: *SyscallFrame) callconv(.c) void {
                         .rax = frame.rax,
                         .vector = 0,
                         .error_code = 0,
-                        .rip = frame.rip - 2,
+                        .rip = frame.rip - INT80_LEN,
                         .cs = frame.cs,
                         .rflags = frame.rflags,
                         .rsp = frame.rsp,
@@ -148,16 +172,16 @@ export fn syscallHandler(frame: *SyscallFrame) callconv(.c) void {
                     while (true) asm volatile ("hlt");
                 },
                 .file => {
-                    const n = @min(count, 4096);
+                    const clamped = @min(count, MAX_IO);
                     const dst: [*]u8 = @ptrFromInt(frame.rsi);
-                    const got = bridge.fsReadInto(f.path[0..f.path_len], f.offset, dst[0..n]);
-                    f.offset += got;
+                    const got = bridge.fsReadInto(descriptor.path[0..descriptor.path_len], descriptor.offset, dst[0..clamped]);
+                    descriptor.offset += got;
                     frame.rax = got;
                 },
                 else => frame.rax = SYS_ERR,
             }
         },
-        7 => { // open(path_ptr, flags)
+        SYS_OPEN => { // open(path_ptr, flags)
             const name = userName(frame.rdi);
             const flags = frame.rsi;
             var size = bridge.fsSize(name);
@@ -178,46 +202,46 @@ export fn syscallHandler(frame: *SyscallFrame) callconv(.c) void {
                 return;
             }
             if (flags & O_APPEND != 0) {
-                if (sched.fdGet(fd)) |f| f.offset = @intCast(size);
+                if (sched.fdGet(fd)) |descriptor| descriptor.offset = @intCast(size);
             }
             frame.rax = @bitCast(fd);
         },
-        8 => { // close(fd)
+        SYS_CLOSE => { // close(fd)
             frame.rax = @bitCast(sched.fdClose(@bitCast(frame.rdi)));
         },
-        9 => { // lseek(fd, offset, whence)
-            if (sched.fdGet(@bitCast(frame.rdi))) |f| {
+        SYS_LSEEK => { // lseek(fd, offset, whence)
+            if (sched.fdGet(@bitCast(frame.rdi))) |descriptor| {
                 switch (frame.rdx) {
-                    0 => f.offset = frame.rsi, // SEEK_SET
-                    1 => f.offset += frame.rsi, // SEEK_CUR
-                    2 => { // SEEK_END
-                        const sz = bridge.fsSize(f.path[0..f.path_len]);
-                        if (sz >= 0) f.offset = @as(u64, @intCast(sz)) +% frame.rsi;
+                    SEEK_SET => descriptor.offset = frame.rsi, // SEEK_SET
+                    SEEK_CUR => descriptor.offset += frame.rsi, // SEEK_CUR
+                    SEEK_END => {
+                        const sz = bridge.fsSize(descriptor.path[0..descriptor.path_len]);
+                        if (sz >= 0) descriptor.offset = @as(u64, @intCast(sz)) +% frame.rsi;
                     },
                     else => {},
                 }
-                frame.rax = f.offset;
+                frame.rax = descriptor.offset;
             } else frame.rax = SYS_ERR;
         },
-        4 => { // fs_size(name_ptr)
+        SYS_FS_SIZE => { // fs_size(name_ptr)
             frame.rax = @bitCast(bridge.fsSize(userName(frame.rdi)));
         },
-        5 => { // fs_read(name_ptr, offset, buf_ptr, len)
-            const len = @min(frame.rcx, 4096);
+        SYS_FS_READ => { // fs_read(name_ptr, offset, buf_ptr, len)
+            const len = @min(frame.rcx, MAX_IO);
             const name = userName(frame.rdi);
             const dst: [*]u8 = @ptrFromInt(frame.rdx);
             frame.rax = bridge.fsReadInto(name, frame.rsi, dst[0..len]);
         },
-        6 => { // fs_write(name_ptr, buf_ptr, len)
-            const len = @min(frame.rdx, 64 * 1024);
+        SYS_FS_WRITE => { // fs_write(name_ptr, buf_ptr, len)
+            const len = @min(frame.rdx, MAX_FS_WRITE);
             const name = userName(frame.rdi);
             const src: [*]const u8 = @ptrFromInt(frame.rsi);
             frame.rax = if (bridge.fsStore(name, src[0..len])) 1 else 0;
         },
-        10 => { // brk(addr)
+        SYS_BRK => { // brk(addr)
             frame.rax = @bitCast(sched.brk(frame.rdi));
         },
-        11 => { // sbrk(increment)
+        SYS_SBRK => { // sbrk(increment)
             frame.rax = @bitCast(sched.sbrk(@bitCast(frame.rdi)));
         },
         else => serial.write("[syscall] unknown\r\n"),

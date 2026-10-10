@@ -6,6 +6,23 @@
 
 const COM1: u16 = 0x3F8;
 
+// 16550 register offsets from the base port
+const REG_DATA: u16 = 0; // rx/tx
+const REG_IER: u16 = 1; // interrupt enable
+const REG_FCR: u16 = 2; // fifo control (write)
+const REG_LCR: u16 = 3; // line control
+const REG_MCR: u16 = 4; // modem control
+const REG_LSR: u16 = 5; // line status
+
+const LCR_DLAB: u8 = 0x80; // divisor latch access bit
+const LCR_8N1: u8 = 0x03; // 8 data bits
+const LSR_THR_EMPTY: u8 = 0x20; // transmit holding register empty
+const FCR_ENABLE: u8 = 0xC7; // enable + clear fifos
+const MCR_READY: u8 = 0x0B; // dtr + rts + out2
+const BAUD_38400_LOW: u8 = 0x03; // divisor 3 low byte
+
+const MIRROR_SIZE = 1 << 15; // 32 kib, power of two
+
 inline fn outb(port: u16, val: u8) void {
     asm volatile ("outb %[val], %[port]"
         :
@@ -29,26 +46,26 @@ inline fn inb(port: u16) u8 {
 // idempotent so it should be relatively safe to call
 // from the panic handler
 pub fn init() void {
-    outb(COM1 + 1, 0x00); // no interrupts
-    outb(COM1 + 3, 0x80); // dlab on: the next two writes set the baud divisor
-    outb(COM1 + 0, 0x03); // divisor 3 -> 38400 baud (low byte)
-    outb(COM1 + 1, 0x00); // divisor high byte
-    outb(COM1 + 3, 0x03); // dlab off, 8n1
-    outb(COM1 + 2, 0xC7); // enable + clear fifos, 14 byte trigger
-    outb(COM1 + 4, 0x0B); // rts/dsr set
+    outb(COM1 + REG_IER, 0x00); // no interrupts
+    outb(COM1 + REG_LCR, LCR_DLAB); // the next two writes set the baud divisor
+    outb(COM1 + REG_DATA, BAUD_38400_LOW); // divisor low byte
+    outb(COM1 + REG_IER, 0x00); // divisor high byte
+    outb(COM1 + REG_LCR, LCR_8N1); // dlab off
+    outb(COM1 + REG_FCR, FCR_ENABLE);
+    outb(COM1 + REG_MCR, MCR_READY);
 }
 
 // every byte we send to the port is also captured here so the revo
 // console can render the same stream
-var mirror: [1 << 15]u8 = undefined; // 32 kib, power of two
+var mirror: [MIRROR_SIZE]u8 = undefined;
 var m_head: usize = 0; // next byte the console will render
 var m_tail: usize = 0; // next slot putc will write
 
 // com1+5 (bit 5) = transmit holding register and
 //                  spin until its clear to send
 fn putc(byte: u8) void {
-    while (inb(COM1 + 5) & 0x20 == 0) {}
-    outb(COM1, byte);
+    while (inb(COM1 + REG_LSR) & LSR_THR_EMPTY == 0) {}
+    outb(COM1 + REG_DATA, byte);
     mirror[m_tail & (mirror.len - 1)] = byte;
     m_tail +%= 1;
 }

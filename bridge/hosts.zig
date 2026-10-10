@@ -128,13 +128,13 @@ fn hostFillRect(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const fb = g_fb orelse return HostResult.data(Data.new.nil()); // no screen, no op
     const x = argInt(usize, args, 0) orelse return HostResult.other("fill_rect: bad x");
     const y = argInt(usize, args, 1) orelse return HostResult.other("fill_rect: bad y");
-    const w = argInt(usize, args, 2) orelse return HostResult.other("fill_rect: bad w");
-    const h = argInt(usize, args, 3) orelse return HostResult.other("fill_rect: bad h");
+    const width = argInt(usize, args, 2) orelse return HostResult.other("fill_rect: bad width");
+    const height = argInt(usize, args, 3) orelse return HostResult.other("fill_rect: bad height");
     const color = argInt(u32, args, 4) orelse return HostResult.other("fill_rect: bad color");
 
     var yy = y;
-    const y_end = @min(y + h, fb.height);
-    const x_end = @min(x + w, fb.width);
+    const y_end = @min(y + height, fb.height);
+    const x_end = @min(x + width, fb.width);
     while (yy < y_end) : (yy += 1) {
         const row = fb.ptr + yy * fb.pitch;
         var xx = x;
@@ -383,8 +383,8 @@ fn hostDiskWrite(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
 
 // pass shit to revo
 fn hostAllocContig(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
-    const n = argInt(u64, args, 0) orelse return HostResult.other("alloc_contig: bad count");
-    return HostResult.data(Data.new.num(kops().alloc_contig(n)));
+    const count = argInt(u64, args, 0) orelse return HostResult.other("alloc_contig: bad count");
+    return HostResult.data(Data.new.num(kops().alloc_contig(count)));
 }
 
 // pass shit to revo
@@ -428,8 +428,8 @@ fn hostScriptSrc(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
 fn hostEvalScript(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
     const sid = args[0].asString() orelse return HostResult.other("eval_script: not a string");
     const src = vm.stringValue(sid);
-    const res = revo.run.runModule(vm, "<script>", src, false) catch |e| {
-        return HostResult.data(try vm.ownValueString(@errorName(e)));
+    const res = revo.run.runModule(vm, "<script>", src, false) catch |err| {
+        return HostResult.data(try vm.ownValueString(@errorName(err)));
     };
     return switch (res) {
         .ok => HostResult.data(Data.new.nil()),

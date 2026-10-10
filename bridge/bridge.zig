@@ -27,7 +27,7 @@ const init_program = blk: {
 
     // gils shit
     const gils_embedded = .{ "gils", "ed" };
-    for (gils_embedded) |g| s = s ++ @embedFile("k_gils_" ++ g) ++ "\n";
+    for (gils_embedded) |name| s = s ++ @embedFile("k_gils_" ++ name) ++ "\n";
 
     s = s ++ @embedFile("k_proc") ++ "\n" ++
         @embedFile("k_ttf") ++ "\n" ++
@@ -114,9 +114,9 @@ pub fn onKey(scancode: u8) void {
     if (cb.asFunction() == null) return;
     g_vm_running = true;
     defer g_vm_running = false;
-    _ = vm.callFunctionParts(cb, null, &[_]revo.Value{revo.Value.new.num(scancode)}, null) catch |e| {
+    _ = vm.callFunctionParts(cb, null, &[_]revo.Value{revo.Value.new.num(scancode)}, null) catch |err| {
         serial.emit("bridge: on_key threw: ");
-        serial.emit(@errorName(e));
+        serial.emit(@errorName(err));
         serial.emit("\r\n");
     };
     flushConsole(vm);
@@ -148,8 +148,8 @@ pub fn fsSize(name: []const u8) i64 {
     const name_val = vm.ownValueString(name) catch return -1;
     g_vm_running = true;
     defer g_vm_running = false;
-    const r = vm.callFunctionParts(func, null, &[_]revo.Value{name_val}, null) catch return -1;
-    return @intFromFloat(r.asNumOpt() orelse return -1);
+    const result = vm.callFunctionParts(func, null, &[_]revo.Value{name_val}, null) catch return -1;
+    return @intFromFloat(result.asNumOpt() orelse return -1);
 }
 
 pub fn fsReadInto(name: []const u8, offset: u64, dst: []u8) usize {
@@ -158,16 +158,16 @@ pub fn fsReadInto(name: []const u8, offset: u64, dst: []u8) usize {
     const name_val = vm.ownValueString(name) catch return 0;
     g_vm_running = true;
     defer g_vm_running = false;
-    const r = vm.callFunctionParts(func, null, &[_]revo.Value{
+    const result = vm.callFunctionParts(func, null, &[_]revo.Value{
         name_val,
         revo.Value.new.num(offset),
         revo.Value.new.num(dst.len),
     }, null) catch return 0;
-    const sid = r.asString() orelse return 0;
+    const sid = result.asString() orelse return 0;
     const bytes = vm.stringValue(sid);
-    const n = @min(bytes.len, dst.len);
-    @memcpy(dst[0..n], bytes[0..n]);
-    return n;
+    const count = @min(bytes.len, dst.len);
+    @memcpy(dst[0..count], bytes[0..count]);
+    return count;
 }
 
 pub fn fsStore(name: []const u8, data: []const u8) bool {
@@ -177,8 +177,8 @@ pub fn fsStore(name: []const u8, data: []const u8) bool {
     const data_val = vm.ownValueString(data) catch return false;
     g_vm_running = true;
     defer g_vm_running = false;
-    const r = vm.callFunctionParts(func, null, &[_]revo.Value{ name_val, data_val }, null) catch return false;
-    return (r.asNumOpt() orelse 0) == 1;
+    const result = vm.callFunctionParts(func, null, &[_]revo.Value{ name_val, data_val }, null) catch return false;
+    return (result.asNumOpt() orelse 0) == 1;
 }
 
 pub fn fsWriteAt(name: []const u8, offset: u64, data: []const u8) bool {
@@ -188,6 +188,6 @@ pub fn fsWriteAt(name: []const u8, offset: u64, data: []const u8) bool {
     const data_val = vm.ownValueString(data) catch return false;
     g_vm_running = true;
     defer g_vm_running = false;
-    const r = vm.callFunctionParts(func, null, &[_]revo.Value{ name_val, revo.Value.new.num(@as(f64, @floatFromInt(offset))), data_val }, null) catch return false;
-    return (r.asNumOpt() orelse 0) == 1;
+    const result = vm.callFunctionParts(func, null, &[_]revo.Value{ name_val, revo.Value.new.num(@as(f64, @floatFromInt(offset))), data_val }, null) catch return false;
+    return (result.asNumOpt() orelse 0) == 1;
 }

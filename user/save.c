@@ -29,15 +29,15 @@ void _start(const char* arg, unsigned long arglen)
     for (;;)
     {
         char line[256];
-        int n = read_line(line, 256);
+        int bytes_read = read_line(line, 256);
         put("\n");
-        if (n == 1 && line[0] == '.')
+        if (bytes_read == 1 && line[0] == '.')
             break;
-        sys_write(fd, line, (unsigned long)n);
-        sys_write(fd, "\n", 1);
+        (void)sys_write(fd, line, (unsigned long)bytes_read);
+        (void)sys_write(fd, "\n", 1);
     }
 
-    sys_close(fd);
+    (void)sys_close(fd);
     put("saved ");
     put(name);
     put("\n");

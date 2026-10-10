@@ -4,8 +4,8 @@ pub const Sink = *const fn ([]const u8) void;
 fn noopSink(_: []const u8) void {}
 var sink: Sink = noopSink;
 
-pub fn setSink(s: Sink) void {
-    sink = s;
+pub fn setSink(new_sink: Sink) void {
+    sink = new_sink;
 }
 
 // mirror everything to serial
@@ -125,8 +125,8 @@ pub const SinkWriter = struct {
         return .{ .interface = .{ .buffer = &.{}, .vtable = &.{ .drain = drain, .flush = flush }, .end = 0 } };
     }
 
-    fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
-        _ = w;
+    fn drain(writer: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        _ = writer;
         var total: usize = 0;
         for (data[0..data.len -| 1]) |slice| {
             if (slice.len > 0) emit(slice);

@@ -55,18 +55,22 @@ export var stack_size_request: limine.StackSizeRequest linksection(".limine_requ
 
 // wrappers matching bridge.kernelops (pmm/vmm return optionals, the revo facing
 // primitives use 0 as the failure sentinel)
-fn kPhysToVirt(p: u64) u64 {
-    return pmm.physToVirt(p);
+fn kPhysToVirt(phys: u64) u64 {
+    return pmm.physToVirt(phys);
 }
+
 fn kAllocFrame() u64 {
     return pmm.alloc() orelse 0;
 }
-fn kAllocContig(n: u64) u64 {
-    return pmm.allocContig(@intCast(n)) orelse 0;
+
+fn kAllocContig(count: u64) u64 {
+    return pmm.allocContig(@intCast(count)) orelse 0;
 }
+
 fn kCreateAddrspace() u64 {
     return vmm.createAddressSpace() orelse 0;
 }
+
 fn kSerialNext() i64 {
     return if (serial.mirrorNext()) |byte| @intCast(byte) else -1;
 }
@@ -87,15 +91,15 @@ fn memmapEntry(i: u64) ?*const limine.MemoryMapEntry {
 }
 
 fn kMemmapBase(i: u64) u64 {
-    return if (memmapEntry(i)) |e| e.base else 0;
+    return if (memmapEntry(i)) |entry| entry.base else 0;
 }
 
 fn kMemmapLen(i: u64) u64 {
-    return if (memmapEntry(i)) |e| e.length else 0;
+    return if (memmapEntry(i)) |entry| entry.length else 0;
 }
 
 fn kMemmapKind(i: u64) u64 {
-    return if (memmapEntry(i)) |e| @backingInt(e.type) else 0;
+    return if (memmapEntry(i)) |entry| @backingInt(entry.type) else 0;
 }
 
 fn kMemFree() u64 {
@@ -133,11 +137,11 @@ const Prog = struct { name: []const u8, phys: u64, size: u64 };
 var g_progs: [elf.programs.len]Prog = undefined;
 
 fn loadPrograms() void {
-    for (elf.programs, 0..) |p, i| {
-        const pages = (p.bytes.len + 4095) / 4096;
+    for (elf.programs, 0..) |program, i| {
+        const pages = (program.bytes.len + pmm.PAGE_SIZE - 1) / pmm.PAGE_SIZE;
         const phys = pmm.allocContig(pages) orelse @panic("no room for an embedded program");
-        @memcpy(@as([*]u8, @ptrFromInt(pmm.physToVirt(phys)))[0..p.bytes.len], p.bytes);
-        g_progs[i] = .{ .name = p.name, .phys = phys, .size = p.bytes.len };
+        @memcpy(@as([*]u8, @ptrFromInt(pmm.physToVirt(phys)))[0..program.bytes.len], program.bytes);
+        g_progs[i] = .{ .name = program.name, .phys = phys, .size = program.bytes.len };
     }
 }
 
@@ -169,11 +173,11 @@ const FontBlob = struct { name: []const u8, phys: u64, size: u64 };
 var g_fonts: [fontdata.fonts.len]FontBlob = undefined;
 
 fn loadFonts() void {
-    for (fontdata.fonts, 0..) |f, i| {
-        const pages = (f.bytes.len + 4095) / 4096;
+    for (fontdata.fonts, 0..) |font, i| {
+        const pages = (font.bytes.len + pmm.PAGE_SIZE - 1) / pmm.PAGE_SIZE;
         const phys = pmm.allocContig(pages) orelse @panic("no room for an embedded font");
-        @memcpy(@as([*]u8, @ptrFromInt(pmm.physToVirt(phys)))[0..f.bytes.len], f.bytes);
-        g_fonts[i] = .{ .name = f.name, .phys = phys, .size = f.bytes.len };
+        @memcpy(@as([*]u8, @ptrFromInt(pmm.physToVirt(phys)))[0..font.bytes.len], font.bytes);
+        g_fonts[i] = .{ .name = font.name, .phys = phys, .size = font.bytes.len };
     }
 }
 
@@ -277,11 +281,11 @@ export fn _start() callconv(.c) noreturn {
     };
 
     // hand the kernel heap + framebuffer + low level ops to revo and bring up the vm
-    const fb: ?bridge.Fb = if (framebuffer.get()) |s| .{
-        .ptr = s.address,
-        .width = s.width,
-        .height = s.height,
-        .pitch = s.pitch,
+    const fb: ?bridge.Fb = if (framebuffer.get()) |info| .{
+        .ptr = info.address,
+        .width = info.width,
+        .height = info.height,
+        .pitch = info.pitch,
     } else null;
     bridge.boot(heap.allocator(), serial.write, fb, kops);
 
@@ -307,18 +311,24 @@ fn pmmSelfTest() void {
     pmm.free(refreed);
 }
 
-// map a fresh frame at an unused higher half address, write a pattern, read it
-// back through the mapping, then create a separate address space, switch into it
-// (a bad cr3 triple faults), map + rw a lower half user page, and switch back
+// map a fresh frame at an unused higher half address
+// write a pattern
+// read it back through the mapping
+// create a separate address space
+// switch into it (a bad cr3 triple faults)
+// map + rw a lower half user page
+// switch back
 fn vmmSelfTest() void {
+    const kernel_pattern: u64 = 0xDEAD_BEEF_CAFE_BABE;
+    const user_pattern: u64 = 0x1234_5678_9ABC_DEF0;
     const pml4 = vmm.activePml4();
     const frame = pmm.alloc().?;
     const test_virt: u64 = 0xffff_c000_0000_0000;
     _ = vmm.map(pml4, test_virt, frame, vmm.WRITE);
     const cell: *volatile u64 = @ptrFromInt(test_virt);
-    cell.* = 0xDEADBEEFCAFEBABE;
+    cell.* = kernel_pattern;
     serial.write("vmm test: map+rw ");
-    serial.write(if (cell.* == 0xDEADBEEFCAFEBABE) "OK" else "FAIL");
+    serial.write(if (cell.* == kernel_pattern) "OK" else "FAIL");
     serial.write(", translate ");
     const back = vmm.translate(pml4, test_virt) orelse 0;
     serial.write(if (back == frame) "OK\r\n" else "FAIL\r\n");
@@ -330,9 +340,9 @@ fn vmmSelfTest() void {
     vmm.loadPml4(as);
     serial.write("vmm test: switched CR3 OK\r\n"); // reached => kernel still mapped
     const ucell: *volatile u64 = @ptrFromInt(user_virt);
-    ucell.* = 0x1234_5678_9ABC_DEF0;
+    ucell.* = user_pattern;
     serial.write("vmm test: user page rw ");
-    serial.write(if (ucell.* == 0x123456789ABCDEF0) "OK\r\n" else "FAIL\r\n");
+    serial.write(if (ucell.* == user_pattern) "OK\r\n" else "FAIL\r\n");
     vmm.loadPml4(pml4); // back to the original address space
     serial.write("vmm test: switched back OK\r\n");
 }
