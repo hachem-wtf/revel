@@ -1,0 +1,21 @@
+# trim a ttf down to the printable ascii subset (U+0020..007E) so we only embed
+# since revel doesnt actually render all glyphs, some fonts that lung wanted are
+# nerd fonts because hes a NERD and are HUGE like my PENIS.
+#
+# usage: revo subset-ttf.rv <in.ttf> <out.ttf>
+
+if argv:len() < 3 do
+  panic("usage: subset-ttf.rv <in.ttf> <out.ttf>")
+end
+
+const in_path = argv[1]
+const out_path = argv[2]
+
+match system({
+  "python3", "-m", "fontTools.subset", in_path,
+  "--unicodes=U+0020-007E",
+  "--no-hinting", "--glyph-names",
+  "--output-file=" ~ out_path,
+})
+  | {:ok, _} => print("wrote " ~ out_path)
+  | {:err, error} => panic("subset failed (#{error}), need fonttools: python3 -m pip install fonttools")

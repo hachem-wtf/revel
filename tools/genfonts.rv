@@ -1,0 +1,97 @@
+# I yoinked a lot of fonts from the linux source code but they are written as C arrays
+# which is cool dont get me wrong, C supremacy and all that bullshit, but I need them as
+# psf1 fonts, so this converts them and shit
+#
+# usage: revo genfonts.rv <font_8x16.c> <out.psf> [height]
+
+fn hexval(character) -> num do
+  const code = character:ascii()
+  if (code >= 48 and code <= 57)
+    return code - 48
+  if (code >= 97 and code <= 102)
+    return code - 87
+  if (code >= 65 and code <= 70)
+    return code - 55
+  return 0
+end
+
+fn read_int(text, start) -> num do
+  let position = start
+  let value = 0
+  let seen = :false
+  while (position < text:len() and text[position]:ascii() >= 48 and text[position]:ascii() <= 57) do
+    value = value * 10 + (text[position]:ascii() - 48)
+    seen = :true
+    position += 1
+  end
+  return if (seen) value else 0
+end
+
+fn parse_c(text) -> table do
+  const marker = text:index_of("}, {")
+  let position = if (marker == :nil) 0 else marker + 4
+  const length = text:len()
+  let bytes = {}
+
+  while (position < length) do
+    if (position + 1 < length and text[position] == "/" and text[position + 1] == "*") do
+      position += 2
+      while (position + 1 < length and (text[position] != "*" or text[position + 1] != "/")) do position += 1 end
+      position += 2
+    end else if (position + 3 < length and text[position] == "0" and text[position + 1] == "x") do
+      bytes:push(hexval(text[position + 2]) * 16 + hexval(text[position + 3]))
+      position += 4
+    end else do
+      position += 1
+    end
+  end
+
+  return bytes
+end
+
+fn main() do
+  if argv:len() < 3 do
+    panic("usage: genfonts.rv <font.c> <out.psf> [height]")
+  end
+
+  const source = argv[1]
+  const output = argv[2]
+
+  let height = 0
+  if (argv:len() > 3)
+    height = read_int(argv[3], 0)
+  else do
+    const marker = source:index_of("8x")
+    height = if (marker == :nil) 16 else read_int(source, marker + 2)
+  end
+
+  const handle = fs.open(source, "r"):unwrap()
+  const text = file.read(handle):unwrap()
+  file.close(handle)
+
+  let rows = parse_c(text)
+  let count = math.floor(rows:len() / height)
+
+  if count < 256 do
+    const padding = height * (256 - count)
+    for index in 0..padding do rows:push(0) end
+    count = 256
+  end
+
+  if (count != 256 and count != 512)
+    count = 256
+
+  const mode = if (count == 256) 0 else 1
+  let bytes = { 0x36, 0x04, mode, height }
+  const total = height * count
+  for i in 0..total do bytes:push(rows[i]) end
+
+  const data = iter.collect_string(bytes)
+  const sink = fs.open(output, "w"):unwrap()
+  file.write(sink, data):unwrap()
+  file.close(sink)
+
+  print("#{output}: psf1 8x#{height}, #{count} glyphs in")
+end
+
+main()
