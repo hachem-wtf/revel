@@ -3,13 +3,4 @@
 const context = env.ctx
 const target = if (context.argv:len() > 1) expand_path(context.argv[1]) else wd.path
 
-if vfs_owns(target) do
-  vfs_ls(target)
-end else do
-  const count = fs:ls(target)
-  if target == "/" do
-    puts("  proc/\n")
-  end else if count == 0 do
-    puts("  (empty)\n")
-  end
-end
+vfs:ls(target)

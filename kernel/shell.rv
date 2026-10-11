@@ -128,9 +128,7 @@ fn cmd_cd(context) do
 
   const target = if (arg == "..") parent_of(wd.path) else expand_path(arg)
 
-  if target == "/proc"
-      or target == "/bin"
-      or fs:is_dir(target) do
+  if vfs:is_dir(target) do
     wd.path = target
   end else do
     fail("cd: #{arg}: not a directory\n")

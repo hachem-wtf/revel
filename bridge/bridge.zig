@@ -21,8 +21,8 @@ const init_program = blk: {
         @embedFile("k_console") ++ "\n" ++
         @embedFile("k_vmm") ++ "\n" ++
         @embedFile("k_fs") ++ "\n" ++
-        @embedFile("k_io") ++ "\n" ++
         @embedFile("k_vfs") ++ "\n" ++
+        @embedFile("k_io") ++ "\n" ++
         @embedFile("k_seed") ++ "\n";
 
     // gils shit

@@ -3,12 +3,12 @@
 global io = {
   fn open(self, path, mode) -> { path: string, offset: num } do
     if mode == "w" do
-      fs:store(path, "")
+      vfs:store(path, "")
     end
 
     let offset = 0
     if mode == "a" do
-      const size = fs:size(path)
+      const size = vfs:size(path)
       if (size > 0)
         offset = size
     end
@@ -17,23 +17,23 @@ global io = {
   end,
 
   fn read(self, handle, count) -> string do
-    const data = fs:read_bytes(handle.path, handle.offset, count)
+    const data = vfs:read_bytes(handle.path, handle.offset, count)
     handle.offset += data:len()
     return data
   end,
 
   fn read_all(self, handle) -> string do
-    const size = fs:size(handle.path)
+    const size = vfs:size(handle.path)
     if (size <= handle.offset)
       return ""
 
-    const data = fs:read_bytes(handle.path, handle.offset, size - handle.offset)
+    const data = vfs:read_bytes(handle.path, handle.offset, size - handle.offset)
     handle.offset += data:len()
     return data
   end,
 
   fn write(self, handle, data) -> num do
-    fs:write_at(handle.path, handle.offset, data)
+    vfs:write_at(handle.path, handle.offset, data)
     handle.offset += data:len()
     return data:len()
   end,

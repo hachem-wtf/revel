@@ -89,6 +89,11 @@ pub fn build(b: *std.Build) void {
         bridge_mod.addAnonymousImport("k_gils_" ++ g, .{ .root_source_file = b.path("gils/" ++ g ++ ".rv") });
     }
 
+    // /etc/ bullshit
+    inline for (.{ "motd", "profile", "lung" }) |name| {
+        bridge_mod.addAnonymousImport("k_etc_" ++ name, .{ .root_source_file = b.path("etc/" ++ name) });
+    }
+
     kernel.root_module.addImport("bridge", bridge_mod);
 
     inline for (.{

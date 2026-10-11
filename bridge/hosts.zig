@@ -24,6 +24,14 @@ const scripts = [_]Script{
     .{ .name = "tail", .src = @embedFile("k_gils_tail") },
 };
 
+// /etc/ shit
+const EtcFile = struct { name: []const u8, src: []const u8 };
+const etc_files = [_]EtcFile{
+    .{ .name = "motd", .src = @embedFile("k_etc_motd") },
+    .{ .name = "profile", .src = @embedFile("k_etc_profile") },
+    .{ .name = "lung", .src = @embedFile("k_etc_lung") },
+};
+
 // the actual framebuffer, the data layout feels pretty self explanatory
 pub const Fb = struct {
     ptr: [*]u8,
@@ -425,6 +433,25 @@ fn hostScriptSrc(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
 }
 
 // pass shit to revo
+fn hostEtcCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return HostResult.data(Data.new.num(etc_files.len));
+}
+
+// pass shit to revo
+fn hostEtcName(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const i = argInt(usize, args, 0) orelse return HostResult.other("etc_name: bad index");
+    if (i >= etc_files.len) return HostResult.other("etc_name: out of range");
+    return HostResult.data(try vm.ownValueString(etc_files[i].name));
+}
+
+// pass shit to revo
+fn hostEtcSrc(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const i = argInt(usize, args, 0) orelse return HostResult.other("etc_src: bad index");
+    if (i >= etc_files.len) return HostResult.other("etc_src: out of range");
+    return HostResult.data(try vm.ownValueString(etc_files[i].src));
+}
+
+// pass shit to revo
 fn hostEvalScript(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
     const sid = args[0].asString() orelse return HostResult.other("eval_script: not a string");
     const src = vm.stringValue(sid);
@@ -487,6 +514,9 @@ pub fn passShitToRevo(vm: *revo.VM) !void {
     try vm.registerGlobal("script_count", try vm.installHost("script_count", define(&[_]T{}, hostScriptCount)));
     try vm.registerGlobal("script_name", try vm.installHost("script_name", define(&[_]T{.number}, hostScriptName)));
     try vm.registerGlobal("script_src", try vm.installHost("script_src", define(&[_]T{.number}, hostScriptSrc)));
+    try vm.registerGlobal("etc_count", try vm.installHost("etc_count", define(&[_]T{}, hostEtcCount)));
+    try vm.registerGlobal("etc_name", try vm.installHost("etc_name", define(&[_]T{.number}, hostEtcName)));
+    try vm.registerGlobal("etc_src", try vm.installHost("etc_src", define(&[_]T{.number}, hostEtcSrc)));
     try vm.registerGlobal("alloc_contig", try vm.installHost("alloc_contig", define(&[_]T{.number}, hostAllocContig)));
     try vm.registerGlobal("blit_str", try vm.installHost("blit_str", define(&[_]T{ .number, .string }, hostBlitStr)));
     try vm.registerGlobal("phys_to_str", try vm.installHost("phys_to_str", define(&[_]T{ .number, .number }, hostPhysToStr)));

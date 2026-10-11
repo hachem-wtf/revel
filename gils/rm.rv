@@ -6,5 +6,5 @@ const parsed = arg_name(context.rest, 0)
 if parsed.name:len() == 0 do
   fail("usage: rm <path>\n")
 end else do
-  fs:rm(expand_path(parsed.name))
+  vfs:rm(expand_path(parsed.name))
 end

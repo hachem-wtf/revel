@@ -5,6 +5,5 @@ const parsed = arg_name(context.rest, 0)
 if parsed.name:len() == 0 do fail("usage: cat <path>\n") end
 else do
   const path = expand_path(parsed.name)
-  if vfs_owns(path) do vfs_cat(path) end
-  else do fs:cat(path) end
+  vfs:cat(path)
 end

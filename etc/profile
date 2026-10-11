@@ -1,0 +1,8 @@
+# acts like .bash_profile or .zsh_profile
+
+const motd_size = fs:size("/etc/motd")
+if motd_size > 0 do
+  puts("\n")
+  puts(fs:read_bytes("/etc/motd", 0, motd_size))
+  puts("\n")
+end

@@ -5,12 +5,12 @@ if context.argv:len() < 2 do
   fail("usage: wc <path>\n")
 end else do
   const path = expand_path(context.argv[1])
-  const size = fs:size(path)
+  const size = vfs:size(path)
 
   if size < 0 do
     fail("wc: #{path}: no such file\n")
   end else do
-    const contents = if (size > 0) fs:read_bytes(path, 0, size) else ""
+    const contents = if (size > 0) vfs:read_bytes(path, 0, size) else ""
     let line_count = 0
     let word_count = 0
     let in_word = :false

@@ -211,7 +211,7 @@ fn ed_write(state, command) do
 
   const contents = ed_join(state.lines)
 
-  fs:store(path, contents)
+  vfs:store(path, contents)
   state.path = path
   state.dirty = :false
   puts("#{contents:len()}\n")
@@ -267,7 +267,7 @@ fn ed_run_file(state, line, parsed) do
 
   const path = expand_path(rest:split(" ")[0])
 
-  if fs:size(path) < 0 do
+  if vfs:size(path) < 0 do
     puts("?\n")
     return :nil
   end
@@ -337,10 +337,10 @@ fn gils_ed(context) -> :hold do
                   else ""
 
   if ed_state.path:len() > 0 do
-    const size = fs:size(ed_state.path)
+    const size = vfs:size(ed_state.path)
 
     if size > 0 do
-      const contents = fs:read_bytes(ed_state.path, 0, size)
+      const contents = vfs:read_bytes(ed_state.path, 0, size)
       const raw_lines = contents:split("\n")
 
       for index in 0..raw_lines:len() do

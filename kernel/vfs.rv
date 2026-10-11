@@ -1,12 +1,25 @@
-# shitty vfs implementation
-# proc and /bin arent on disk, theyre completely virtual
+# vfs mount table
+#
+# tools only ever touch vfs not fs now since they never know or care whether a path is a real
+# file on disk or something, so they can read/write to shit like /dev/null for example
 
-const TASK_STATES = { "free", "ready", "dead", "blocked" }
+const T_FILE = 1
+const T_DIR = 2
+const T_CHAR = 3 # stream
 
-global vfs_owns = fn(path) -> bool do
-  if (path == "/proc" or path:starts_with?("/proc/"))
-    return :true
-  return :false
+fn parent_dir(path) -> string do
+  const parts = path:split("/")
+  let out = ""
+  for index in 0..(parts:len() - 1) do
+    if (parts[index] != "")
+      out = out ~ "/" ~ parts[index]
+  end
+  return if (out == "") "/" else out
+end
+
+fn leaf(path) -> string do
+  const parts = path:split("/")
+  return parts[parts:len() - 1]
 end
 
 global parse_pid = fn(text) -> num do
@@ -24,39 +37,307 @@ global parse_pid = fn(text) -> num do
   return number
 end
 
-global vfs_ls = fn(path) do
-  if path == "/proc" do
-    puts("  uptime\n  meminfo\n")
+const TASK_STATES = { "free", "ready", "dead", "blocked" }
+
+const procfs = {
+  writable = :false,
+
+  fn body(self, path) -> string | :nil do
+    if (path == "/proc/uptime")
+      return "#{math.floor(uptime() / 100)}s\n"
+    if (path == "/proc/meminfo")
+      return "#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB total\n"
+
+    if path:starts_with?("/proc/") do
+      const pid = parse_pid(path[6..])
+      if (pid >= 0 and pid < task_max() and task_state(pid) != 0)
+        return "pid #{pid}: #{TASK_STATES[task_state(pid)]}\n"
+    end
+
+    return :nil
+  end,
+
+  fn entries(self, path) -> table | :nil do
+    if (path != "/proc")
+      return :nil
+
+    let out = {
+      { name = "uptime", type = T_FILE, size = self:size("/proc/uptime") },
+      { name = "meminfo", type = T_FILE, size = self:size("/proc/meminfo") },
+    }
 
     for pid in 0..task_max() do
       if (task_state(pid) != 0)
-        puts("  #{pid}\n")
+        out:push({ name = "#{pid}", type = T_FILE, size = self:size("/proc/#{pid}") })
     end
-  end else do
-    puts("ls: #{path}: no such directory\n")
-  end
+
+    return out
+  end,
+
+  fn is_dir(self, path) -> bool do
+    return path == "/proc"
+  end,
+
+  fn size(self, path) -> num do
+    const b = self:body(path)
+    if (b == :nil)
+      return -1
+    return b:len()
+  end,
+
+  fn read_bytes(self, path, offset, length) -> string do
+    const b = self:body(path)
+    if (b == :nil)
+      return ""
+
+    let stop = offset + length
+    if (stop > b:len())
+      stop = b:len()
+    if (offset >= stop)
+      return ""
+
+    return b[offset..stop]
+  end,
+}
+
+const DEV_SAMPLE = 64
+
+fn dev_size(name) -> num do
+  if (name == "zero" or name == "random")
+    return DEV_SAMPLE
+  if (name == "null" or name == "full")
+    return 0
+  return -1
 end
 
-global vfs_cat = fn(path) do
-  if path == "/proc/uptime" do
-    puts("#{math.floor(uptime() / 100)}s\n")
-    return :nil
-  end
+global devfs = {
+  writable = :true,
+  rng = 0,
 
-  if path == "/proc/meminfo" do
-    puts("#{(mem_free() shr 20)} MiB free / #{(mem_total() shr 20)} MiB total\n")
-    return :nil
-  end
+  # random bs go
+  fn next_byte(self) -> num do
+    if (self.rng == 0)
+      self.rng = (uptime() band 0xffffffff) bor 1
 
-  if path:starts_with?("/proc/") do
-    const pid = parse_pid(path[6..])
-    if pid >= 0 and pid < task_max() and task_state(pid) != 0 do
-      puts("pid #{pid}: #{TASK_STATES[task_state(pid)]}\n")
+    let x = self.rng
+    x = x bxor ((x shl 13) band 0xffffffff)
+    x = x bxor (x shr 17)
+    x = x bxor ((x shl 5) band 0xffffffff)
+    self.rng = x band 0xffffffff
+
+    return self.rng band 0xff
+  end,
+
+  fn entries(self, path) -> table | :nil do
+    if (path != "/dev")
+      return :nil
+
+    const names = { "null", "zero", "random", "full" }
+    let out = {}
+    for index in 0..names:len() do
+      const name = names[index]
+      out:push({ name = name, type = T_CHAR, size = dev_size(name) })
+    end
+    return out
+  end,
+
+  fn is_dir(self, path) -> bool do
+    return path == "/dev"
+  end,
+
+  fn size(self, path) -> num do
+    return dev_size(leaf(path))
+  end,
+
+  fn read_bytes(self, path, offset, length) -> string do
+    const name = leaf(path)
+
+    if name == "zero" do
+      let out = ""
+      for index in 0..length do out = out ~ string.of_ascii(0) end
+      return out
+    end
+
+    if name == "random" do
+      let out = ""
+      # 33..126 is the printable ascii range
+      for index in 0..length do out = out ~ string.of_ascii(33 + (self:next_byte() band 0x3f)) end
+      return out
+    end
+
+    return "" # null and full read as empty
+  end,
+
+  fn store(self, path, text) -> num do
+    const name = leaf(path)
+    if (name == "null")
+      return 1
+    if name == "full" do
+      fail("#{path}: no space left on device\n")
+      return 0
+    end
+
+    fail("#{path}: read-only device\n")
+    return 0
+  end,
+
+  fn write_at(self, path, offset, text) do
+    self:store(path, text)
+  end,
+}
+
+global vfs = {
+  mounts = {
+    { at = "/proc", fs = procfs },
+    { at = "/dev", fs = devfs },
+  },
+
+  fn mount(self, at, backend) do
+    self.mounts:push({ at = at, fs = backend })
+  end,
+
+  fn backend(self, path) do
+    let best = :nil
+    for index in 0..self.mounts:len() do
+      const m = self.mounts[index]
+      if (path == m.at or path:starts_with?(m.at ~ "/")) do
+        if (best == :nil or m.at:len() > best.at:len())
+          best = m
+      end
+    end
+    return if (best == :nil) fs else best.fs
+  end,
+
+  fn children_of(self, dir) -> table do
+    let out = {}
+    for index in 0..self.mounts:len() do
+      const at = self.mounts[index].at
+      if (parent_dir(at) == dir)
+        out:push(leaf(at))
+    end
+    return out
+  end,
+
+  fn entries(self, path) -> table | :nil do
+    let out = self:backend(path):entries(path)
+
+    const kids = self:children_of(path)
+    if kids:len() > 0 do
+      if (out == :nil)
+        out = {}
+      for index in 0..kids:len() do
+        out:push({ name = kids[index], type = T_DIR, size = 0 })
+      end
+    end
+
+    return out
+  end,
+
+  fn is_dir(self, path) -> bool do
+    for index in 0..self.mounts:len() do
+      if (self.mounts[index].at == path)
+        return :true
+    end
+    return self:backend(path):is_dir(path)
+  end,
+
+  fn size(self, path) -> num do
+    return self:backend(path):size(path)
+  end,
+
+  fn read_bytes(self, path, offset, length) -> string do
+    return self:backend(path):read_bytes(path, offset, length)
+  end,
+
+  fn store(self, path, text) -> num do
+    const b = self:backend(path)
+    if (b == fs)
+      return fs:store(path, text)
+    if b.writable == :false do
+      fail("#{path}: read-only filesystem\n")
+      return 0
+    end
+    return b:store(path, text)
+  end,
+
+  fn write_at(self, path, offset, text) do
+    const b = self:backend(path)
+    if b == fs do
+      fs:write_at(path, offset, text)
       return :nil
     end
-    puts("cat: #{path}: no such file\n")
-    return :nil
-  end
+    if b.writable == :false do
+      fail("#{path}: read-only filesystem\n")
+      return :nil
+    end
+    b:write_at(path, offset, text)
+  end,
 
-  puts("cat: #{path}: no such file\n")
-end
+  fn mkdir(self, path) do
+    if self:backend(path) != fs do
+      fail("#{path}: read-only filesystem\n")
+      return :nil
+    end
+    fs:mkdir(path)
+  end,
+
+  fn unlink(self, path) do
+    if self:backend(path) != fs do
+      fail("#{path}: read-only filesystem\n")
+      return :nil
+    end
+    fs:unlink(path)
+  end,
+
+  fn rm(self, path) do
+    if self:backend(path) != fs do
+      fail("rm: #{path}: read-only filesystem\n")
+      return :nil
+    end
+    fs:rm(path)
+  end,
+
+  fn cat(self, path) do
+    const b = self:backend(path)
+    if b == fs do
+      fs:cat(path)
+      return :nil
+    end
+
+    const sz = b:size(path)
+    if sz < 0 do
+      fail("cat: #{path}: no such file\n")
+      return :nil
+    end
+
+    puts(b:read_bytes(path, 0, sz))
+  end,
+
+  fn ls(self, path) do
+    const items = self:entries(path)
+
+    if items == :nil do
+      const sz = self:size(path)
+      if (sz >= 0)
+        puts("  #{leaf(path)}  #{sz} bytes\n")
+      else
+        fail("ls: #{path}: no such directory\n")
+      return :nil
+    end
+
+    if items:len() == 0 do
+      puts("  (empty)\n")
+      return :nil
+    end
+
+    for index in 0..items:len() do
+      const entry = items[index]
+      if (entry.type == T_DIR)
+        puts("  #{entry.name}/\n")
+      else if (entry.type == T_CHAR)
+        puts("  #{entry.name}\n")
+      else
+        puts("  #{entry.name}  #{entry.size} bytes\n")
+    end
+  end,
+}

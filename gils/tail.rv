@@ -2,11 +2,11 @@
 # and its between my legs
 
 fn file_lines(path) -> table | :nil do
-  const size = fs:size(path)
+  const size = vfs:size(path)
   if (size < 0)
     return :nil
 
-  const contents = if (size > 0) fs:read_bytes(path, 0, size) else ""
+  const contents = if (size > 0) vfs:read_bytes(path, 0, size) else ""
   const raw_lines = contents:split("\n")
   let result = {}
 

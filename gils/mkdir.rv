@@ -5,5 +5,5 @@ const context = env.ctx
 if context.argv:len() < 2 do
   fail("usage: mkdir <path>\n")
 end else do
-  fs:mkdir(expand_path(context.argv[1]))
+  vfs:mkdir(expand_path(context.argv[1]))
 end
