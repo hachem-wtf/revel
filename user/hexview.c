@@ -1,103 +1,75 @@
-#include "user.h"
-
-static const char HEX[] = "0123456789abcdef";
-
-static void put_hex8(unsigned char byte)
-{
-    char digits[2] = { HEX[byte >> 4], HEX[byte & 15] };
-    (void)sys_write(1, digits, 2);
-}
-
-static void put_hex32(unsigned long value)
-{
-    char digits[8];
-    for (int nibble = 0; nibble < 8; nibble++)
-        digits[nibble] = HEX[(value >> ((7 - nibble) * 4)) & 15];
-    (void)sys_write(1, digits, 8);
-}
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #define PAGE 256
 #define COLS 16
 
-void _start(const char* arg, unsigned long arglen)
+int main(int argc, char** argv)
 {
-    char name[64];
-
-    if (arglen > 0 && arglen < 64)
-    {
-        for (unsigned long i = 0; i < arglen; i++)
-            name[i] = arg[i];
-        name[arglen] = 0;
-    }
+    char prompt_name[64];
+    const char* name;
+    if (argc >= 2)
+        name = argv[1];
     else
     {
-        put("hexview, type a filename\nfile: ");
-        (void)read_line(name, 64);
-        put("\n");
+        printf("hexview, type a filename\nfile: ");
+        readline(prompt_name, 64);
+        printf("\n");
+        name = prompt_name;
     }
 
-    long size = sys_fs_size(name);
-    if (size < 0)
+    int fd = open(name, O_RDONLY);
+    if (fd < 0)
     {
-        put("no such file\n");
-        sys_exit(1);
+        printf("no such file\n");
+        return 1;
     }
+    long size = lseek(fd, 0, SEEK_END);
 
     unsigned long offset = 0;
     char buffer[PAGE];
 
     for (;;)
     {
-        long count = sys_fs_read(name, offset, buffer, PAGE);
+        lseek(fd, (long)offset, SEEK_SET);
+        long count = read(fd, buffer, PAGE);
 
-        put("--- ");
-        put(name);
-        put(" @ 0x");
-        put_hex32(offset);
-        put(" / 0x");
-        put_hex32((unsigned long)size);
-        put(" ---\n");
+        printf("--- %s @ 0x%08lx / 0x%08lx ---\n", name, offset, (unsigned long)size);
 
         for (long row = 0; row < count; row += COLS)
         {
-            put_hex32(offset + (unsigned long)row);
-            put(": ");
+            printf("%08lx: ", offset + (unsigned long)row);
             for (int column = 0; column < COLS; column++)
             {
                 if (row + column < count)
-                {
-                    put_hex8((unsigned char)buffer[row + column]);
-                    (void)sys_write(1, " ", 1);
-                }
+                    printf("%02x ", (unsigned char)buffer[row + column]);
                 else
-                    put("   ");
+                    printf("   ");
             }
 
-            put(" ");
+            printf(" ");
             for (int column = 0; column < COLS && row + column < count; column++)
             {
                 char character = buffer[row + column];
-                if (character >= 32 && character < 127)
-                    (void)sys_write(1, &character, 1);
-                else
-                    (void)sys_write(1, ".", 1);
+                putchar((character >= 32 && character < 127) ? character : '.');
             }
-            put("\n");
+            printf("\n");
         }
 
-        put("[n]ext [p]rev [q]uit (or up/down arrows) > ");
-        char key = (char)get_char();
+        printf("[n]ext [p]rev [q]uit (or up/down arrows) > ");
+        int key = getchar();
         if (key == 27) // ESC
         {
-            (void)get_char();
-            char final = (char)get_char();
+            getchar();
+            int final = getchar();
             if (final == 'A')
                 key = 'p';
             else if (final == 'B')
                 key = 'n';
         }
 
-        put("\n");
+        printf("\n");
         if (key == 'q')
             break;
         if (key == 'n' && offset + PAGE < (unsigned long)size)
@@ -106,5 +78,6 @@ void _start(const char* arg, unsigned long arglen)
             offset -= PAGE;
     }
 
-    sys_exit(0);
+    close(fd);
+    return 0;
 }

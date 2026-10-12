@@ -1,63 +1,52 @@
 const std = @import("std");
 
-// the gils coreutils
-const gils_tools = .{ "gils", "ls", "tree", "cat", "rm", "mkdir", "touch", "cp", "mv", "wc", "head", "tail", "ed" };
+const boot_gils = [_][]const u8{ "gils", "ed" };
+
+const user_cc = [_][]const u8{
+    "zig",                  "cc",
+    "-target",              "x86_64-freestanding",
+    "-ffreestanding",       "-nostdlib",
+    "-static",              "-no-pie",
+    "-fno-stack-protector", "-fno-sanitize=all",
+    "-Wall",                "-Wextra",
+    "-Werror",              "-Wpedantic",
+    "-I",                   "sysroot/usr/include",
+    "-Wl,-T,user/link.ld",  "-Wl,--build-id=none",
+    "-o",
+};
 
 pub fn build(b: *std.Build) void {
-    // Default to ReleaseSafe because Debug pulls Zig's UBSan runtime and other
-    // sanitization, which needs f128/SSE ops, which i don't provide.
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "optimize mode") orelse .safe;
+    const target = kernelTarget(b);
 
-    // The kernel must NOT touch SSE/MMX/AVX until it has enabled them itself, so
-    // I strip those features and let the compiler use a soft-float ABI
-    // `code_model = .kernel` keeps relocations valid for the higher-half load
-    // address in boot/linker.ld.
-    //
-    // In other words. Going raw baby
+    const kernel = buildKernel(b, target, optimize);
+    kernel.root_module.addImport("kasset", buildKernelAssets(b, target, optimize));
+    kernel.root_module.addImport("bridge", buildBridge(b, target, optimize));
+
+    b.installArtifact(kernel);
+}
+
+fn kernelTarget(b: *std.Build) std.Build.ResolvedTarget {
     var query: std.Target.Query = .{
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
         .abi = .none,
     };
-
     const Feature = std.Target.x86.Feature;
     query.cpu_features_sub.addFeature(@backingInt(Feature.mmx));
     query.cpu_features_sub.addFeature(@backingInt(Feature.avx));
     query.cpu_features_sub.addFeature(@backingInt(Feature.avx2));
+    return b.resolveTargetQuery(query);
+}
 
-    const target = b.resolveTargetQuery(query);
-
-    const kernel = b.addExecutable(.{
-        .name = "revel",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("boot/boot.zig"),
-            .target = target,
-            .optimize = optimize,
-            .code_model = .kernel,
-            .red_zone = false,
-            .single_threaded = true,
-            .link_libc = false,
-        }),
-    });
-    kernel.entry = .{ .symbol_name = "_start" };
-    kernel.pie = false;
-    kernel.setLinkerScript(b.path("boot/linker.ld"));
-
-    // the big guns
-    const revo_dep = b.dependency("revo", .{
-        .target = target,
-        .optimize = optimize,
-        .features = "regex",
-    });
-    const revo_mod = revo_dep.module("revo");
-
-    var visited: std.AutoHashMap(*std.Build.Module, void) = .init(b.allocator);
-    defer visited.deinit();
-    kernelize(revo_mod, &visited);
-
-    // the thin guns
-    const bridge_mod = b.createModule(.{
-        .root_source_file = b.path("bridge/bridge.zig"),
+fn kernelModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    root: std.Build.LazyPath,
+) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = root,
         .target = target,
         .optimize = optimize,
         .code_model = .kernel,
@@ -65,72 +54,222 @@ pub fn build(b: *std.Build) void {
         .single_threaded = true,
         .link_libc = false,
     });
-    bridge_mod.addImport("revo", revo_mod);
-    inline for (.{
-        .{ "k_font", "kernel/font.rv" },
-        .{ "k_console", "kernel/console.rv" },
-        .{ "k_vmm", "kernel/vmm.rv" },
-        .{ "k_fs", "kernel/fs.rv" },
-        .{ "k_io", "kernel/io.rv" },
-        .{ "k_vfs", "kernel/vfs.rv" },
-        .{ "k_seed", "kernel/seed.rv" },
-        .{ "k_proc", "kernel/proc.rv" },
-        .{ "k_ttf", "kernel/ttf.rv" },
-        .{ "k_shell", "kernel/shell.rv" },
-        .{ "k_tty", "kernel/tty.rv" },
-        .{ "k_input", "kernel/input.rv" },
-        .{ "k_main", "kernel/main.rv" },
-    }) |e| {
-        bridge_mod.addAnonymousImport(e[0], .{ .root_source_file = b.path(e[1]) });
-    }
-
-    // load gils
-    inline for (gils_tools) |g| {
-        bridge_mod.addAnonymousImport("k_gils_" ++ g, .{ .root_source_file = b.path("gils/" ++ g ++ ".rv") });
-    }
-
-    // /etc/ bullshit
-    inline for (.{ "motd", "profile", "lung" }) |name| {
-        bridge_mod.addAnonymousImport("k_etc_" ++ name, .{ .root_source_file = b.path("etc/" ++ name) });
-    }
-
-    kernel.root_module.addImport("bridge", bridge_mod);
-
-    inline for (.{
-        .{ "font_vga16", "fonts/vga16.psf" },
-        .{ "font_vga8", "fonts/vga8.psf" },
-        .{ "font_sun16", "fonts/sun16.psf" },
-        .{ "font_acorn8", "fonts/acorn8.psf" },
-        .{ "font_pearl8", "fonts/pearl8.psf" },
-        .{ "font_dejavu", "fonts/dejavu.ttf" },
-        .{ "font_terminess", "fonts/terminess.ttf" },
-    }) |e| {
-        kernel.root_module.addAnonymousImport(e[0], .{ .root_source_file = b.path(e[1]) });
-    }
-
-    inline for (.{ "hexview", "calc", "primes", "save", "chat", "membrk" }) |prog| {
-        const cc = b.addSystemCommand(&.{
-            "zig",                  "cc",
-            "-target",              "x86_64-freestanding",
-            "-ffreestanding",       "-nostdlib",
-            "-static",              "-no-pie",
-            "-fno-stack-protector", "-fno-sanitize=all",
-            "-Wall",                "-Wextra",
-            "-Werror",              "-Wpedantic",
-            "-Wl,-T,user/link.ld",  "-Wl,--build-id=none",
-            "-o",
-        });
-        const prog_elf = cc.addOutputFileArg(prog ++ ".elf");
-        cc.addFileArg(b.path("user/" ++ prog ++ ".c"));
-        cc.addFileInput(b.path("user/user.h"));
-        cc.addFileInput(b.path("user/link.ld"));
-        kernel.root_module.addAnonymousImport("user_" ++ prog, .{ .root_source_file = prog_elf });
-    }
-
-    b.installArtifact(kernel);
 }
 
-// force a module and everything it imports to the kernel's codegen settings
+fn buildKernel(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Step.Compile {
+    const kernel = b.addExecutable(.{
+        .name = "revel",
+        .root_module = kernelModule(b, target, optimize, b.path("boot/boot.zig")),
+    });
+    kernel.entry = .{ .symbol_name = "_start" };
+    kernel.pie = false;
+    kernel.setLinkerScript(b.path("boot/linker.ld"));
+    return kernel;
+}
+
+fn buildBridge(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    const bridge = kernelModule(b, target, optimize, b.path("bridge/bridge.zig"));
+
+    const revo = b.dependency("revo", .{
+        .target = target,
+        .optimize = optimize,
+        .features = "regex",
+    }).module("revo");
+    var visited: std.AutoHashMap(*std.Build.Module, void) = .init(b.allocator);
+    defer visited.deinit();
+    kernelize(revo, &visited);
+    bridge.addImport("revo", revo);
+
+    for (scan(b, "kernel", ".rv")) |file| {
+        const name = stripExt(file);
+        bridge.addAnonymousImport(b.fmt("k_{s}", .{name}), .{
+            .root_source_file = b.path(b.fmt("kernel/{s}", .{file})),
+        });
+    }
+    for (boot_gils) |name| {
+        bridge.addAnonymousImport(b.fmt("k_gils_{s}", .{name}), .{
+            .root_source_file = b.path(b.fmt("gils/{s}.rv", .{name})),
+        });
+    }
+
+    bridge.addImport("basset", buildBridgeAssets(b, target, optimize));
+    return bridge;
+}
+
+fn buildBridgeAssets(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    var embeds = Embeds{ .b = b };
+    var src: []const u8 =
+        \\// generated by build.zig
+        \\pub const Blob = struct { name: []const u8, src: []const u8 };
+        \\
+        \\
+    ;
+
+    src = b.fmt("{s}pub const gils = [_]Blob{{\n", .{src});
+    for (scan(b, "gils", ".rv")) |file| {
+        const name = stripExt(file);
+        if (contains(&boot_gils, name)) continue;
+        const key = b.fmt("k_gils_{s}", .{name});
+        embeds.add(key, b.path(b.fmt("gils/{s}", .{file})));
+        src = b.fmt("{s}    .{{ .name = \"{s}\", .src = @embedFile(\"{s}\") }},\n", .{ src, name, key });
+    }
+
+    src = b.fmt("{s}}};\n\npub const etc = [_]Blob{{\n", .{src});
+    for (scan(b, "sysroot/etc", "")) |file| {
+        const key = b.fmt("k_etc_{s}", .{sanitize(b, file)});
+        embeds.add(key, b.path(b.fmt("sysroot/etc/{s}", .{file})));
+        src = b.fmt("{s}    .{{ .name = \"{s}\", .src = @embedFile(\"{s}\") }},\n", .{ src, file, key });
+    }
+
+    src = b.fmt("{s}}};\n\npub const include = [_]Blob{{\n", .{src});
+    for (headers(b)) |path| {
+        const key = b.fmt("k_inc_{s}", .{sanitize(b, path)});
+        embeds.add(key, b.path(b.fmt("sysroot/usr/include/{s}", .{path})));
+        src = b.fmt("{s}    .{{ .name = \"{s}\", .src = @embedFile(\"{s}\") }},\n", .{ src, path, key });
+    }
+
+    src = b.fmt("{s}}};\n", .{src});
+    const mod = kernelModule(b, target, optimize, b.addWriteFiles().add("basset.zig", src));
+    embeds.apply(mod);
+    return mod;
+}
+
+fn buildKernelAssets(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    var embeds = Embeds{ .b = b };
+    var src: []const u8 =
+        \\// generated by build.zig
+        \\pub const Blob = struct { name: []const u8, bytes: []const u8 };
+        \\
+        \\
+    ;
+
+    src = b.fmt("{s}pub const fonts = [_]Blob{{\n", .{src});
+    for (scan(b, "sysroot/usr/share", "")) |file| {
+        const key = b.fmt("font_{s}", .{sanitize(b, file)});
+        embeds.add(key, b.path(b.fmt("sysroot/usr/share/{s}", .{file})));
+        src = b.fmt("{s}    .{{ .name = \"{s}\", .bytes = @embedFile(\"{s}\") }},\n", .{ src, file, key });
+    }
+    src = b.fmt("{s}}};\n\npub const programs = [_]Blob{{\n", .{src});
+    for (scan(b, "user", ".c")) |file| {
+        const name = stripExt(file);
+        const key = b.fmt("user_{s}", .{name});
+        embeds.add(key, compileProgram(b, name));
+        src = b.fmt("{s}    .{{ .name = \"{s}\", .bytes = @embedFile(\"{s}\") }},\n", .{ src, name, key });
+    }
+    src = b.fmt("{s}}};\n", .{src});
+
+    const mod = kernelModule(b, target, optimize, b.addWriteFiles().add("kasset.zig", src));
+    embeds.apply(mod);
+    return mod;
+}
+
+fn compileProgram(b: *std.Build, name: []const u8) std.Build.LazyPath {
+    const cc = b.addSystemCommand(&user_cc);
+    const elf = cc.addOutputFileArg(b.fmt("{s}.elf", .{name}));
+
+    cc.addFileArg(b.path(b.fmt("user/{s}.c", .{name})));
+    for (scan(b, "sysroot/usr/lib/libc", ".c")) |unit|
+        cc.addFileArg(b.path(b.fmt("sysroot/usr/lib/libc/{s}", .{unit})));
+
+    for (headers(b)) |path|
+        cc.addFileInput(b.path(b.fmt("sysroot/usr/include/{s}", .{path})));
+    cc.addFileInput(b.path("user/link.ld"));
+
+    return elf;
+}
+
+fn scan(b: *std.Build, dir_path: []const u8, ext: []const u8) [][]const u8 {
+    const io = b.graph.io;
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |err|
+        std.debug.panic("build: cannot scan {s}: {s}", .{ dir_path, @errorName(err) });
+    defer dir.close(io);
+
+    var buf: [128][]const u8 = undefined;
+    var count: usize = 0;
+    var it = dir.iterate();
+    while (it.next(io) catch @panic("build: dir iterate failed")) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ext)) continue;
+        buf[count] = b.allocator.dupe(u8, entry.name) catch @panic("OOM");
+        count += 1;
+    }
+
+    const names = b.allocator.dupe([]const u8, buf[0..count]) catch @panic("OOM");
+    std.mem.sort([]const u8, names, {}, lessThan);
+    return names;
+}
+
+fn headers(b: *std.Build) [][]const u8 {
+    var buf: [128][]const u8 = undefined;
+    var count: usize = 0;
+    for (scan(b, "sysroot/usr/include", ".h")) |name| {
+        buf[count] = name;
+        count += 1;
+    }
+    for (scan(b, "sysroot/usr/include/sys", ".h")) |name| {
+        buf[count] = b.fmt("sys/{s}", .{name});
+        count += 1;
+    }
+    return b.allocator.dupe([]const u8, buf[0..count]) catch @panic("OOM");
+}
+
+fn lessThan(_: void, a: []const u8, c: []const u8) bool {
+    return std.mem.lessThan(u8, a, c);
+}
+
+fn stripExt(name: []const u8) []const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
+    return name[0..dot];
+}
+
+fn sanitize(b: *std.Build, name: []const u8) []const u8 {
+    const out = b.allocator.dupe(u8, name) catch @panic("OOM");
+    for (out) |*ch| {
+        if (!std.ascii.isAlphanumeric(ch.*)) ch.* = '_';
+    }
+    return out;
+}
+
+const Embeds = struct {
+    b: *std.Build,
+    keys: [128][]const u8 = undefined,
+    paths: [128]std.Build.LazyPath = undefined,
+    count: usize = 0,
+
+    fn add(self: *Embeds, key: []const u8, path: std.Build.LazyPath) void {
+        self.keys[self.count] = key;
+        self.paths[self.count] = path;
+        self.count += 1;
+    }
+
+    fn apply(self: *Embeds, module: *std.Build.Module) void {
+        for (0..self.count) |i|
+            module.addAnonymousImport(self.keys[i], .{ .root_source_file = self.paths[i] });
+    }
+};
+
+fn contains(haystack: []const []const u8, needle: []const u8) bool {
+    for (haystack) |item|
+        if (std.mem.eql(u8, item, needle)) return true;
+    return false;
+}
+
 fn kernelize(mod: *std.Build.Module, visited: *std.AutoHashMap(*std.Build.Module, void)) void {
     if (visited.contains(mod)) return;
     visited.put(mod, {}) catch @panic("OOM building module graph");

@@ -1,22 +1,19 @@
-#include "user.h"
+#include <stdio.h>
+#include <stdlib.h>
 
-void _start(void)
+int main(void)
 {
-    put("primes up to N, enter N (empty line quits)\n");
+    printf("primes up to N, enter N (empty line quits)\n");
     char line[32];
     for (;;)
     {
-        put("> ");
-        int length = read_line(line, 32);
-        put("\n");
+        printf("> ");
+        int length = readline(line, 32);
+        printf("\n");
         if (length == 0)
             break;
 
-        long limit = 0;
-        for (int position = 0; position < length; position++)
-            if (line[position] >= '0' && line[position] <= '9')
-                limit = limit * 10 + (line[position] - '0');
-
+        long limit = atol(line);
         int count = 0;
         for (long candidate = 2; candidate <= limit; candidate++)
         {
@@ -29,14 +26,11 @@ void _start(void)
                 }
             if (prime)
             {
-                put_int(candidate);
-                put(" ");
+                printf("%ld ", candidate);
                 count++;
             }
         }
-        put("\n");
-        put_int(count);
-        put(" primes\n");
+        printf("\n%d primes\n", count);
     }
-    sys_exit(0);
+    return 0;
 }

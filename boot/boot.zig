@@ -8,8 +8,9 @@ const pmm = @import("pmm.zig");
 const heap = @import("heap.zig");
 const vmm = @import("vmm.zig");
 const user = @import("user.zig");
-const elf = @import("elf.zig");
-const fontdata = @import("fonts.zig");
+// fonts + compiled programs, generated from the filesystem by build.zig
+const elf = @import("kasset");
+const fontdata = @import("kasset");
 const keyboard = @import("keyboard.zig");
 const timer = @import("timer.zig");
 const sched = @import("sched.zig");

@@ -18,6 +18,15 @@ fn seed_fonts() do
   end
 end
 
+# libc bullshitery
+fn seed_include() do
+  fs:mkdir("/usr/include")
+  fs:mkdir("/usr/include/sys")
+  for index in 0..inc_count() do
+    fs:store("/usr/include/#{inc_name(index)}", inc_src(index))
+  end
+end
+
 fn seed_fs() do
   fs:mkdir("/usr")
   fs:mkdir("/etc")
@@ -31,4 +40,5 @@ fn seed_fs() do
 
   seed_bin()
   seed_fonts()
+  seed_include()
 end

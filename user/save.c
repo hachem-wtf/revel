@@ -1,45 +1,37 @@
-#include "user.h"
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
 
-void _start(const char* arg, unsigned long arglen)
+int main(int argc, char** argv)
 {
-    if (arglen == 0 || arglen >= 120)
+    if (argc < 2)
     {
-        put("usage: run save <path>\n");
-        sys_exit(1);
+        printf("usage: run save <path>\n");
+        return 1;
     }
 
-    char name[128];
-    for (unsigned long i = 0; i < arglen; i++)
-        name[i] = arg[i];
-    name[arglen] = 0;
-
-    long fd = sys_open(name, O_CREAT | O_TRUNC | O_WRONLY);
+    const char* name = argv[1];
+    int fd = open(name, O_CREAT | O_TRUNC | O_WRONLY);
     if (fd < 0)
     {
-        put("save: ");
-        put(name);
-        put(": cannot open\n");
-        sys_exit(1);
+        printf("save: %s: cannot open\n", name);
+        return 1;
     }
 
-    put("saving to ");
-    put(name);
-    put(" -- type lines, a single . saves\n");
+    printf("saving to %s -- type lines, a single . saves\n", name);
 
     for (;;)
     {
         char line[256];
-        int bytes_read = read_line(line, 256);
-        put("\n");
+        int bytes_read = readline(line, 256);
+        printf("\n");
         if (bytes_read == 1 && line[0] == '.')
             break;
-        (void)sys_write(fd, line, (unsigned long)bytes_read);
-        (void)sys_write(fd, "\n", 1);
+        write(fd, line, (unsigned long)bytes_read);
+        write(fd, "\n", 1);
     }
 
-    (void)sys_close(fd);
-    put("saved ");
-    put(name);
-    put("\n");
-    sys_exit(0);
+    close(fd);
+    printf("saved %s\n", name);
+    return 0;
 }

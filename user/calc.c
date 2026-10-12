@@ -1,20 +1,20 @@
-#include "user.h"
+#include <stdio.h>
 
 static int is_digit(char character)
 {
     return character >= '0' && character <= '9';
 }
 
-void _start(void)
+int main(void)
 {
-    put("calc, e.g. 3 + 4 * 2 (left to right), empty line quits\n");
+    printf("calc, e.g. 3 + 4 * 2 (left to right), empty line quits\n");
 
     char line[128];
     for (;;)
     {
-        put("> ");
-        int length = read_line(line, 128);
-        put("\n");
+        printf("> ");
+        int length = readline(line, 128);
+        printf("\n");
         if (length == 0)
             break;
 
@@ -49,7 +49,7 @@ void _start(void)
                 {
                     if (value == 0)
                     {
-                        put("divide by zero\n");
+                        printf("divide by zero\n");
                         valid = 0;
                         break;
                     }
@@ -66,19 +66,15 @@ void _start(void)
             }
             else
             {
-                put("bad character\n");
+                printf("bad character\n");
                 valid = 0;
                 break;
             }
         }
 
         if (valid && saw_number)
-        {
-            put("= ");
-            put_int(accumulator);
-            put("\n");
-        }
+            printf("= %ld\n", accumulator);
     }
 
-    sys_exit(0);
+    return 0;
 }
