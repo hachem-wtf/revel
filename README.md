@@ -1,3 +1,13 @@
+# this project has been moved
+> [!WARNING]
+> this project has been permanently moved to [https://git.hachem.wtf/revel](https://git.hachem.wtf/revel/about/).
+> it is no longer maintained here and as a result no further updates will be published to this repository.
+> please update your git remote to point to the new location.
+> ``` sh
+> $ git remote set-url origin https://git.hachem.wtf/revel
+> ```
+---
+
 # `revel
 `/ˈrɛvəl/` a small x86-64 unix like os written in [revo](https://github.com/if-not-nil/revo). *(ty [gingeh](https://tech.lgbt/@Gingeh) for the ipa)*
 
